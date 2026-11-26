@@ -1,0 +1,300 @@
+@import "tailwindcss";
+
+@layer base {
+  :root,
+  [data-theme="obsidian"] {
+    --chart-grid: rgba(255, 255, 255, 0.055);
+    --chart-cursor: rgba(255, 255, 255, 0.22);
+    --chart-dot-fill: #0b0d14;
+    --gauge-track: rgba(255, 255, 255, 0.075);
+    --tooltip-bg: rgba(13, 16, 24, 0.94);
+    --tooltip-border: rgba(255, 255, 255, 0.11);
+  }
+
+  [data-theme="titanium"] {
+    --chart-grid: rgba(24, 28, 36, 0.08);
+    --chart-cursor: rgba(24, 28, 36, 0.28);
+    --chart-dot-fill: #f7f7f4;
+    --gauge-track: rgba(24, 28, 36, 0.1);
+    --tooltip-bg: rgba(252, 252, 250, 0.96);
+    --tooltip-border: rgba(24, 28, 36, 0.13);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "PingFang SC", "Hiragino Sans GB", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    user-select: none;
+  }
+}
+
+.font-mono-num {
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==================== OBSIDIAN DARK THEME ==================== */
+.cockpit-shell {
+  background:
+    radial-gradient(900px 420px at 82% -10%, rgba(16, 185, 129, 0.08), transparent 62%),
+    radial-gradient(640px 360px at 18% 0%, rgba(56, 189, 248, 0.06), transparent 60%),
+    linear-gradient(180deg, #0b0d14 0%, #07080d 100%);
+  color: #f4f4f5;
+}
+
+.cockpit-rail {
+  background: rgba(0, 0, 0, 0.26);
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.cockpit-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.popover-shell {
+  background:
+    radial-gradient(280px 180px at 85% 0%, rgba(16, 185, 129, 0.12), transparent 65%),
+    linear-gradient(180deg, rgba(16, 19, 28, 0.97) 0%, rgba(9, 11, 17, 0.99) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow:
+    0 10px 20px -6px rgba(0, 0, 0, 0.55),
+    0 2px 8px -2px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  color: #f4f4f5;
+}
+
+.glass-card {
+  background: linear-gradient(180deg, rgba(22, 26, 38, 0.74) 0%, rgba(14, 16, 24, 0.86) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+
+.glass-card-hover {
+  transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+}
+
+.glass-card-hover:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* ==================== BRUSHED NATURAL TITANIUM LIGHT THEME ==================== */
+[data-theme="titanium"] .cockpit-shell {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.24) 0px,
+      rgba(255, 255, 255, 0.24) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    radial-gradient(960px 440px at 18% -12%, rgba(255, 255, 255, 0.82), transparent 62%),
+    radial-gradient(760px 380px at 88% -8%, rgba(16, 185, 129, 0.08), transparent 60%),
+    linear-gradient(160deg, #efeee9 0%, #e4e3dd 48%, #d9d8d0 100%);
+  color: #15171c;
+}
+
+[data-theme="titanium"] .cockpit-rail {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.2) 0px,
+      rgba(255, 255, 255, 0.2) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    linear-gradient(180deg, rgba(248, 248, 245, 0.84) 0%, rgba(235, 234, 228, 0.88) 100%);
+  border-right: 1px solid rgba(24, 27, 34, 0.09);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.55);
+}
+
+[data-theme="titanium"] .cockpit-header {
+  background: rgba(246, 246, 242, 0.58);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid rgba(24, 27, 34, 0.08);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.5);
+}
+
+[data-theme="titanium"] .popover-shell {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.22) 0px,
+      rgba(255, 255, 255, 0.22) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    radial-gradient(280px 180px at 85% 0%, rgba(16, 185, 129, 0.1), transparent 65%),
+    linear-gradient(180deg, rgba(249, 249, 246, 0.97) 0%, rgba(234, 233, 227, 0.98) 100%);
+  border: 1px solid rgba(24, 27, 34, 0.14);
+  box-shadow:
+    0 10px 20px -6px rgba(15, 18, 26, 0.24),
+    0 2px 8px -2px rgba(15, 18, 26, 0.14),
+    0 0 0 0.5px rgba(255, 255, 255, 0.75) inset,
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  color: #15171c;
+}
+
+[data-theme="titanium"] .glass-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(244, 243, 238, 0.86) 100%);
+  border: 1px solid rgba(24, 27, 34, 0.095);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 10px 26px -14px rgba(24, 27, 34, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96);
+}
+
+[data-theme="titanium"] .glass-card-hover:hover {
+  border-color: rgba(24, 27, 34, 0.17);
+  box-shadow:
+    0 2px 4px rgba(15, 23, 42, 0.06),
+    0 14px 30px -14px rgba(24, 27, 34, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 1);
+}
+
+/* Precision Titanium Ink & Metallic Surface Token Overrides */
+[data-theme="titanium"] .text-zinc-50,
+[data-theme="titanium"] .text-zinc-100 {
+  color: #14171d !important;
+}
+[data-theme="titanium"] .text-zinc-200 {
+  color: #252a34 !important;
+}
+[data-theme="titanium"] .text-zinc-300 {
+  color: #3f4654 !important;
+}
+[data-theme="titanium"] .text-zinc-400 {
+  color: #5c6474 !important;
+}
+[data-theme="titanium"] .text-zinc-500 {
+  color: #747c8c !important;
+}
+
+[data-theme="titanium"] .text-emerald-200,
+[data-theme="titanium"] .text-emerald-300 {
+  color: #047857 !important;
+}
+[data-theme="titanium"] .text-emerald-400 {
+  color: #059669 !important;
+}
+[data-theme="titanium"] .text-sky-200,
+[data-theme="titanium"] .text-sky-300 {
+  color: #0369a1 !important;
+}
+[data-theme="titanium"] .text-sky-400 {
+  color: #0284c7 !important;
+}
+[data-theme="titanium"] .text-amber-200,
+[data-theme="titanium"] .text-amber-300 {
+  color: #b45309 !important;
+}
+[data-theme="titanium"] .text-rose-200,
+[data-theme="titanium"] .text-rose-300 {
+  color: #be123c !important;
+}
+
+[data-theme="titanium"] .bg-black\/25,
+[data-theme="titanium"] .bg-black\/30,
+[data-theme="titanium"] .bg-black\/35,
+[data-theme="titanium"] .bg-black\/40,
+[data-theme="titanium"] .bg-black\/45 {
+  background-color: rgba(24, 28, 36, 0.05) !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+[data-theme="titanium"] .bg-white\/\[0\.04\],
+[data-theme="titanium"] .bg-white\/5,
+[data-theme="titanium"] .bg-white\/6,
+[data-theme="titanium"] .bg-white\/8 {
+  background-color: rgba(24, 28, 36, 0.055) !important;
+}
+[data-theme="titanium"] .bg-white\/10,
+[data-theme="titanium"] .bg-white\/12 {
+  background-color: rgba(255, 255, 255, 0.88) !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 1);
+}
+[data-theme="titanium"] .bg-white\/15 {
+  background-color: rgba(24, 28, 36, 0.18) !important;
+}
+[data-theme="titanium"] .bg-\[\#0d1018\],
+[data-theme="titanium"] .bg-\[\#0d121a\]\/95 {
+  background-color: rgba(252, 252, 250, 0.96) !important;
+}
+
+[data-theme="titanium"] .border-white\/6,
+[data-theme="titanium"] .border-white\/\[0\.07\],
+[data-theme="titanium"] .border-white\/7,
+[data-theme="titanium"] .border-white\/8,
+[data-theme="titanium"] .border-white\/10,
+[data-theme="titanium"] .border-white\/12 {
+  border-color: rgba(24, 28, 36, 0.1) !important;
+}
+[data-theme="titanium"] .hover\:bg-white\/10:hover,
+[data-theme="titanium"] .hover\:bg-white\/12:hover,
+[data-theme="titanium"] .hover\:bg-white\/\[0\.08\]:hover {
+  background-color: rgba(24, 28, 36, 0.09) !important;
+}
+[data-theme="titanium"] .hover\:bg-white\/\[0\.04\]:hover,
+[data-theme="titanium"] .hover\:bg-white\/\[0\.05\]:hover {
+  background-color: rgba(24, 28, 36, 0.05) !important;
+}
+[data-theme="titanium"] .bg-emerald-500 {
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 2px rgba(5, 150, 105, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+[data-theme="titanium"] .bg-emerald-500\/15,
+[data-theme="titanium"] .bg-emerald-500\/18,
+[data-theme="titanium"] .bg-emerald-500\/\[0\.11\] {
+  background-color: rgba(16, 185, 129, 0.12) !important;
+}
+
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+
+.titlebar-nodrag {
+  -webkit-app-region: no-drag;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.75;
+  }
+  70% {
+    transform: scale(2.15);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.15);
+    opacity: 0;
+  }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2.2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 126, 140, 0.26);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 126, 140, 0.42);
+}

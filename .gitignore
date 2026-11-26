@@ -1,0 +1,22 @@
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node & Frontend
+app/node_modules/
+app/dist/
+app/.vite/
+*.local
+
+# Rust & Tauri
+app/src-tauri/target/
+app/src-tauri/gen/
+
+# Secrets & Keys (NEVER commit)
+*.key
+*.pem
+*.env
+.env.*
+tauri-signing.key

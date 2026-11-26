@@ -21,7 +21,7 @@ description: >-
    - **已购买**：收集：
      - **SSH 凭证**：IP、端口（默认 22）、用户名（通常 `root`）、密码或私钥路径
      - **用户与流量配额**：独立订阅数量与备注（如 `Me`、`GF`）、VPS 月总流量（如 `1TB`）、每人分配额度、账单重置日（如每月 `25` 号），用于 Clash 卡片显示剩余流量进度条
-     - **本机加固**：是否顺手自动优化本机 Clash Verge Rev（禁 IPv6、Fake-IP DoH、TUN `Mixed` + `Merge` 并发保活）
+     - **本机加固与看板**：是否顺手自动优化本机 Clash Verge Rev（禁 IPv6、Fake-IP DoH、TUN `Mixed` + `Merge` 并发保活），以及是否一键安装并自动接入本地 **Native ISP Cockpit** 领航看板（支持窗口化驾驶舱 + 状态栏实时网速/延迟 + GitHub 自动更新）
 
 > [!IMPORTANT]
 > **安全边界**：SSH 密码、3x-ui 账密、UUID 与 Sub ID 严禁写入 Git 仓库或公开文档，交付后提醒用户存入密码管理器。
@@ -145,7 +145,7 @@ description: >-
 
 ---
 
-## Stage 5 · 交付、本机 Clash Verge Rev 加固与速查排障
+## Stage 5 · 交付、本机 Clash Verge Rev 加固、看板自动接入与速查排障
 
 1. **清晰交付**：
    - **全平台万能订阅（首选）**：`http://<VPS_IP>:2096/<subPath>/<SubID>`（自动识别 Clash Verge Rev / FlClash / Stash 下发完整 YAML；Shadowrocket / v2rayNG 下发 Base64 VLESS）
@@ -160,7 +160,49 @@ description: >-
      4. 执行 `dscacheutil -flushcache` 并 `open -a "Clash Verge"`。
    - **端到端验真**：经 Mihomo Unix Socket（`/var/run/clash-verge-service/users/<UID>/verge-mihomo.sock`）核验配置生效；验证 `curl -4 https://ipinfo.io/ip` 为 VPS IP、`curl -6 --max-time 3 https://ipinfo.io/ip` 无 IPv6 泄露、`https://www.baidu.com` 直连 `200 OK`、`https://api.anthropic.com` 稳定连通。
    - **日常最优开关**：TUN ✅开（`Mixed`）、系统代理 ❌关、DNS 覆写 ✅开、IPv6 ❌关、统一延迟 ✅开、模式 **规则（Rule）**。
-3. **3 步断流/超时速查**：
+3. **Stage 5.5 · 本地领航看板一键安装、免密体检与自动纳管（Zero-Touch Handoff）**：
+   - **① 自动检测并安装看板 App**（macOS `/Applications/Native ISP Cockpit.app`）：
+     - 若尚未安装：优先从 GitHub Releases（`https://github.com/luvio-arlan/native-isp-vps/releases/latest`）拉取最新安装包，或直接在本仓库 `app/` 目录一键本地打包安装：
+       ```bash
+       cd app && pnpm install && pnpm tauri build --bundles app
+       rm -rf "/Applications/Native ISP Cockpit.app"
+       cp -R "src-tauri/target/release/bundle/macos/Native ISP Cockpit.app" "/Applications/Native ISP Cockpit.app"
+       xattr -cr "/Applications/Native ISP Cockpit.app"
+       ```
+     - 安装后看板内置 `tauri-plugin-updater`，后续仓库推送新版本 GitHub Release Tag 时自动检测并支持应用内一键验签更新。
+   - **② 写入专用 SSH 体检公钥（让看板「内核深度体检」一键免密可用）**：
+     - 在本机生成独立私钥 `~/.ssh/id_ed25519_native_isp`（若不存在），并将对应 `.pub` 追加到 VPS `/root/.ssh/authorized_keys`（`chmod 600`）。
+   - **③ 执行 Zero-Touch 安全交接并拉起看板**：
+     - 调用 [cockpit-handoff.sh](./scripts/cockpit-handoff.sh) 将节点交接清单以 `chmod 600` 写入 `~/.local/share/native-isp-vps/inbox/`：
+       ```bash
+       bash scripts/cockpit-handoff.sh <<'EOF'
+       {
+         "name": "🇺🇸 <CITY> · Dual ISP",
+         "flag": "🇺🇸",
+         "city": "<CITY>",
+         "ispTag": "Dual ISP",
+         "host": "<VPS_IP>",
+         "vlessPort": 443,
+         "panelUrl": "http://<VPS_IP>:<PANEL_PORT>/<WEB_BASE_PATH>",
+         "apiToken": "<API_TOKEN>",
+         "panelUsername": "<PANEL_USER>",
+         "panelPassword": "<PANEL_PASS>",
+         "subUrl": "http://<VPS_IP>:2096/<subPath>/<SubID>",
+         "mihomoSubUrl": "http://<VPS_IP>:2096/mihomo/<SubID>",
+         "realityTarget": "<REALITY_SNI>",
+         "monthlyTotalGb": 1000,
+         "resetDay": 25,
+         "sshPort": <SSH_PORT>,
+         "sshUser": "root",
+         "sshKeyPath": "$HOME/.ssh/id_ed25519_native_isp",
+         "source": "ai-handoff"
+       }
+       EOF
+       open "/Applications/Native ISP Cockpit.app"
+       ```
+     - 看板会在 1 秒内捕获该文件、将 `apiToken`/`panelPassword` 加密封印至 **macOS Keychain / 系统钥匙串** 并**覆零粉碎临时文件**，随后立即点亮状态栏实时网速、延迟与月度配额监控（原色钛合金 / 曜石黑双皮肤可一键切换）。
+   - **④ 反向自愈闭环**：当用户从看板「内核深度体检」页复制「脱敏 AI 修复诊断包」发来时，直接按其中标出的漂移项（如 `qdisc != fq`、`ipv6Leak=true`、`Swap 未配置`）执行 Stage 1 / Stage 3 / Stage 5 定点修复并复验。
+4. **3 步断流/超时速查**：
    1. 查客户端：确认 `tun.stack` 为 `mixed`、存在 `AND,((NETWORK,UDP),(DST-PORT,443)),REJECT` 规则、`Merge` 的 `tcp-concurrent` 与 `keep-alive-idle: 15` 已生效；
    2. 查内核：确认 `tc qdisc show` 为 `fq`、`tcp_fastopen=0`、`tcp_ecn=0`、`tcp_keepalive_time=120`；
    3. 查 Xray 与资源：确认 Xray 内置 `1.1.1.1+8.8.8.8` 缓存 DNS 正常、`free -h` 内存与 Swap 健康。
