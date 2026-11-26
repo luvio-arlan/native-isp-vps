@@ -72,6 +72,7 @@ export const CockpitApp: React.FC = () => {
     aiProbes,
     leakResult,
     auditReport,
+    history24h,
     isProbing,
     isAuditing,
     toast,
@@ -79,6 +80,7 @@ export const CockpitApp: React.FC = () => {
     selectNode,
     addNode,
     removeNode,
+    loadHistory24h,
     runFullProbe,
     runAudit,
     saveSettings,
@@ -301,10 +303,12 @@ export const CockpitApp: React.FC = () => {
             <NetworkTab
               node={activeNode}
               snapshot={snapshot}
+              history24h={history24h}
               aiProbes={aiProbes}
               leakResult={leakResult}
               isProbing={isProbing}
               onRunProbe={runFullProbe}
+              onLoadHistory24h={loadHistory24h}
             />
           )}
           {nav === "users" && (

@@ -1,10 +1,12 @@
 use crate::models::{AuditItem, AuditReport, NodeConfig};
+use crate::storage;
 use chrono::Utc;
 use std::collections::HashMap;
 use tokio::process::Command;
 
 const AUDIT_SCRIPT: &str = r#"
 echo "QDISC=$(tc qdisc show 2>/dev/null | head -n 4 | tr '\n' ';')"
+echo "QDISC_SVC=$(systemctl is-enabled vps-fq-qdisc.service 2>/dev/null)"
 echo "CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
 echo "TFO=$(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null)"
 echo "ECN=$(sysctl -n net.ipv4.tcp_ecn 2>/dev/null)"
@@ -17,12 +19,29 @@ echo "F2B_TOT=$(fail2ban-client status sshd 2>/dev/null | awk -F: '/Total banned
 "#;
 
 pub async fn run_ssh_audit(node: &NodeConfig) -> AuditReport {
+    let _ = storage::ensure_dirs();
+    // Respect macOS 104-byte Unix domain socket `sun_path` limit (%C expands to 40 hex chars)
+    let preferred = storage::config_dir().join("s-%C");
+    let control_path = if preferred.to_string_lossy().len() + 38 <= 98 {
+        preferred
+    } else {
+        std::path::PathBuf::from("/tmp/nisp-%C")
+    };
+
     let mut cmd = Command::new("ssh");
     cmd.kill_on_drop(true);
     cmd.arg("-o")
         .arg("BatchMode=yes")
         .arg("-o")
-        .arg("ConnectTimeout=7")
+        .arg("ConnectTimeout=6")
+        .arg("-o")
+        .arg("ServerAliveInterval=5")
+        .arg("-o")
+        .arg("ControlMaster=auto")
+        .arg("-o")
+        .arg("ControlPersist=90s")
+        .arg("-o")
+        .arg(format!("ControlPath={}", control_path.to_string_lossy()))
         .arg("-o")
         .arg("StrictHostKeyChecking=accept-new")
         .arg("-p")
@@ -98,6 +117,7 @@ pub async fn run_ssh_audit(node: &NodeConfig) -> AuditReport {
     }
 
     let qdisc = kv.get("QDISC").cloned().unwrap_or_default();
+    let qdisc_svc = kv.get("QDISC_SVC").cloned().unwrap_or_default();
     let cc = kv.get("CC").cloned().unwrap_or_default();
     let tfo = kv.get("TFO").cloned().unwrap_or_default();
     let ecn = kv.get("ECN").cloned().unwrap_or_default();
@@ -115,7 +135,15 @@ pub async fn run_ssh_audit(node: &NodeConfig) -> AuditReport {
             key: "qdisc".into(),
             label: "网卡队列 FQ (Fair Queue)".into(),
             passed: qdisc.contains("qdisc fq "),
-            actual: if qdisc.contains("qdisc fq ") { "fq".into() } else { qdisc },
+            actual: if qdisc.contains("qdisc fq ") {
+                if qdisc_svc == "enabled" {
+                    "fq (已持久化)".into()
+                } else {
+                    "fq".into()
+                }
+            } else {
+                qdisc
+            },
             expected: "fq".into(),
             severity: "critical".into(),
         },

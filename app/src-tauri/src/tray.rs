@@ -1,12 +1,13 @@
 use crate::models::{AppSettings, TelemetrySnapshot};
+use crate::state::CockpitState;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Manager, PhysicalPosition, WindowEvent};
-use tokio::sync::Notify;
 
 static LAST_POPOVER_BLUR: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+static LAST_TRAY_TITLE: OnceLock<Mutex<String>> = OnceLock::new();
 
 fn last_blur_slot() -> &'static Mutex<Option<Instant>> {
     LAST_POPOVER_BLUR.get_or_init(|| Mutex::new(None))
@@ -38,27 +39,45 @@ pub fn format_compact_bps(bps: u64) -> String {
     format!("{}B", bps)
 }
 
-pub fn update_tray_title(app: &AppHandle, snapshot: &TelemetrySnapshot, settings: &AppSettings) {
+pub fn update_tray_title_values(
+    app: &AppHandle,
+    down_bps: u64,
+    rtt_ms: Option<f64>,
+    settings: &AppSettings,
+) {
+    let rtt_str = rtt_ms
+        .map(|r| format!("{:.0}ms", r))
+        .unwrap_or_else(|| "OFF".to_string());
+    let title = match settings.tray_display.as_str() {
+        "dot-only" => String::new(),
+        "rtt-only" => format!(" {}", rtt_str),
+        _ => format!(" ↓{} · {}", format_compact_bps(down_bps), rtt_str),
+    };
+
+    // Deduplicate identical titles to avoid redundant macOS NSStatusItem redraws
+    let slot = LAST_TRAY_TITLE.get_or_init(|| Mutex::new(String::new()));
+    if let Ok(mut last) = slot.lock() {
+        if *last == title {
+            return;
+        }
+        *last = title.clone();
+    }
+
     if let Some(tray) = app.tray_by_id("main-tray") {
-        let down = if snapshot.local_shield.mihomo_connected {
-            snapshot.local_shield.local_down_bps
-        } else {
-            snapshot.xui.net_down_bps
-        };
-        let rtt_str = snapshot
-            .rtt_ms
-            .map(|r| format!("{:.0}ms", r))
-            .unwrap_or_else(|| "OFF".to_string());
-        let title = match settings.tray_display.as_str() {
-            "dot-only" => String::new(),
-            "rtt-only" => format!(" {}", rtt_str),
-            _ => format!(" ↓{} · {}", format_compact_bps(down), rtt_str),
-        };
         let _ = tray.set_title(Some(&title));
     }
 }
 
-pub fn show_main_window_internal(app: &AppHandle) {
+pub fn update_tray_title(app: &AppHandle, snapshot: &TelemetrySnapshot, settings: &AppSettings) {
+    let down = if snapshot.local_shield.mihomo_connected {
+        snapshot.local_shield.local_down_bps
+    } else {
+        snapshot.xui.net_down_bps
+    };
+    update_tray_title_values(app, down, snapshot.rtt_ms, settings);
+}
+
+pub fn show_main_window_internal(app: &AppHandle, state: &Arc<CockpitState>) {
     #[cfg(target_os = "macos")]
     {
         let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
@@ -70,6 +89,11 @@ pub fn show_main_window_internal(app: &AppHandle) {
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
+        let app_clone = app.clone();
+        let state_clone = Arc::clone(state);
+        tauri::async_runtime::spawn(async move {
+            state_clone.push_snapshot_to_window(&app_clone, "main").await;
+        });
     }
 }
 
@@ -89,19 +113,17 @@ pub fn toggle_popover_at(
     tray_y: f64,
     tray_w: f64,
     tray_h: f64,
-    poll_wake: &Arc<Notify>,
+    state: &Arc<CockpitState>,
 ) {
     if let Some(pop) = app.get_webview_window("popover") {
         if pop.is_visible().unwrap_or(false) {
             let _ = pop.hide();
             return;
         }
-        // Prevent macOS tray click-to-close reopen race (blur hides popover right before Click Up)
         if was_just_blurred() {
             return;
         }
 
-        // Find the monitor containing the clicked tray icon for accurate multi-monitor clamping
         let target_monitor = app.available_monitors().ok().and_then(|monitors| {
             monitors.into_iter().find(|m| {
                 let pos = m.position();
@@ -136,11 +158,17 @@ pub fn toggle_popover_at(
         let _ = pop.set_position(PhysicalPosition::new(x as i32, y));
         let _ = pop.show();
         let _ = pop.set_focus();
-        poll_wake.notify_one();
+
+        let app_clone = app.clone();
+        let state_clone = Arc::clone(state);
+        tauri::async_runtime::spawn(async move {
+            state_clone.push_snapshot_to_window(&app_clone, "popover").await;
+        });
+        state.poll_wake.notify_one();
     }
 }
 
-pub fn setup_tray_and_windows(app: &App, poll_wake: Arc<Notify>) -> tauri::Result<()> {
+pub fn setup_tray_and_windows(app: &App, state: Arc<CockpitState>) -> tauri::Result<()> {
     let open_item = MenuItem::with_id(app, "open", "展开完整驾驶舱", true, None::<&str>)?;
     let collapse_item = MenuItem::with_id(app, "collapse", "收缩到状态栏", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出 Native ISP Cockpit", true, None::<&str>)?;
@@ -151,8 +179,8 @@ pub fn setup_tray_and_windows(app: &App, poll_wake: Arc<Notify>) -> tauri::Resul
         .or_else(|| app.default_window_icon().cloned())
         .ok_or_else(|| tauri::Error::AssetNotFound("tray-icon.png".into()))?;
 
-    let wake_for_menu = Arc::clone(&poll_wake);
-    let wake_for_tray = Arc::clone(&poll_wake);
+    let state_for_menu = Arc::clone(&state);
+    let state_for_tray = Arc::clone(&state);
 
     let _tray = TrayIconBuilder::with_id("main-tray")
         .icon(tray_icon)
@@ -163,8 +191,8 @@ pub fn setup_tray_and_windows(app: &App, poll_wake: Arc<Notify>) -> tauri::Resul
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "open" => {
-                show_main_window_internal(app);
-                wake_for_menu.notify_one();
+                show_main_window_internal(app, &state_for_menu);
+                state_for_menu.poll_wake.notify_one();
             }
             "collapse" => collapse_to_tray_internal(app),
             "quit" => app.exit(0),
@@ -191,13 +219,12 @@ pub fn setup_tray_and_windows(app: &App, poll_wake: Arc<Notify>) -> tauri::Resul
                     pos.y,
                     size.width,
                     size.height,
-                    &wake_for_tray,
+                    &state_for_tray,
                 );
             }
         })
         .build(app)?;
 
-    // Main window close -> collapse cleanly to menu bar instead of quitting
     if let Some(main_win) = app.get_webview_window("main") {
         let handle = app.handle().clone();
         main_win.on_window_event(move |event| {
@@ -208,7 +235,6 @@ pub fn setup_tray_and_windows(app: &App, poll_wake: Arc<Notify>) -> tauri::Resul
         });
     }
 
-    // Popover auto-hide when clicking outside + disable native rectangular window shadow
     if let Some(pop_win) = app.get_webview_window("popover") {
         let _ = pop_win.set_shadow(false);
         let pop_clone = pop_win.clone();

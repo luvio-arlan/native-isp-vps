@@ -59,7 +59,8 @@ DOMAIN-SUFFIX,ggpht.com,PROXY
 DOMAIN-SUFFIX,googleusercontent.com,PROXY
 
 # === 3. 国内域名与国内/局域网 IP 直连（不绕路、不减速）===
+# 注意：GEOIP 必须带 no-resolve！否则 Fake-IP 模式下每个未命中前置规则的海外域名都会被迫做一次本地 DoH 同步解析（额外增加 150-400ms 首包延迟）。
 DOMAIN-SUFFIX,cn,DIRECT
 GEOSITE,CN,DIRECT
 GEOIP,PRIVATE,DIRECT,no-resolve
-GEOIP,CN,DIRECT
+GEOIP,CN,DIRECT,no-resolve

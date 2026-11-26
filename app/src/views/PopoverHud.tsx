@@ -174,7 +174,7 @@ export const PopoverHud: React.FC = () => {
               CPU {Math.round(snapshot?.xui.cpuPercent ?? 0)}%
             </div>
             <div className="truncate whitespace-nowrap font-mono-num text-[9.5px] tracking-tight text-zinc-400">
-              RAM {memPct}% · {snapshot?.xui.tcpCount ?? 0} TCP
+              RAM {memPct}% · {snapshot?.xui.tcpCount ?? 0}连接
             </div>
           </div>
 

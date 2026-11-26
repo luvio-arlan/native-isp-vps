@@ -14,6 +14,7 @@ interface SparklineChartProps {
   primaryLabel?: string;
   secondaryLabel?: string;
   formatValue: (val: number) => string;
+  formatTime?: (ts: number) => string;
   showGrid?: boolean;
   compact?: boolean;
 }
@@ -36,7 +37,7 @@ function buildSmoothPath(points: Array<{ x: number; y: number }>): string {
   return d;
 }
 
-export const SparklineChart: React.FC<SparklineChartProps> = ({
+export const SparklineChart: React.FC<SparklineChartProps> = React.memo(({
   data,
   height = 148,
   primaryColor = "#10b981",
@@ -44,6 +45,7 @@ export const SparklineChart: React.FC<SparklineChartProps> = ({
   primaryLabel = "下行",
   secondaryLabel = "上行",
   formatValue,
+  formatTime,
   showGrid = true,
   compact = false,
 }) => {
@@ -55,13 +57,18 @@ export const SparklineChart: React.FC<SparklineChartProps> = ({
   const padBottom = 6;
   const innerW = width - padX * 2;
   const innerH = height - padTop - padBottom;
+  const bottomY = padTop + innerH;
 
+  // Memoize both coordinates AND SVG Bézier path strings so hover mousemove at 60fps
+  // never recomputes curve geometry.
   const computed = useMemo(() => {
     if (data.length === 0) {
       return {
         primaryPts: [] as Array<{ x: number; y: number }>,
-        secondaryPts: [] as Array<{ x: number; y: number }>,
-        maxVal: 1,
+        primaryLine: "",
+        secondaryLine: "",
+        primaryArea: "",
+        secondaryArea: "",
       };
     }
     let maxVal = 0;
@@ -86,22 +93,22 @@ export const SparklineChart: React.FC<SparklineChartProps> = ({
           ]
         : []
     );
-    return { primaryPts, secondaryPts, maxVal };
-  }, [data, innerW, innerH]);
 
-  const primaryLine = buildSmoothPath(computed.primaryPts);
-  const secondaryLine = buildSmoothPath(computed.secondaryPts);
-  const bottomY = padTop + innerH;
+    const primaryLine = buildSmoothPath(primaryPts);
+    const secondaryLine = buildSmoothPath(secondaryPts);
+    const primaryArea =
+      primaryPts.length > 1
+        ? `${primaryLine} L ${primaryPts[primaryPts.length - 1].x.toFixed(1)} ${bottomY} L ${primaryPts[0].x.toFixed(1)} ${bottomY} Z`
+        : "";
+    const secondaryArea =
+      secondaryPts.length > 1
+        ? `${secondaryLine} L ${secondaryPts[secondaryPts.length - 1].x.toFixed(1)} ${bottomY} L ${secondaryPts[0].x.toFixed(1)} ${bottomY} Z`
+        : "";
 
-  const primaryArea =
-    computed.primaryPts.length > 1
-      ? `${primaryLine} L ${computed.primaryPts[computed.primaryPts.length - 1].x.toFixed(1)} ${bottomY} L ${computed.primaryPts[0].x.toFixed(1)} ${bottomY} Z`
-      : "";
-  const secondaryArea =
-    computed.secondaryPts.length > 1
-      ? `${secondaryLine} L ${computed.secondaryPts[computed.secondaryPts.length - 1].x.toFixed(1)} ${bottomY} L ${computed.secondaryPts[0].x.toFixed(1)} ${bottomY} Z`
-      : "";
+    return { primaryPts, primaryLine, secondaryLine, primaryArea, secondaryArea };
+  }, [data, innerW, innerH, bottomY]);
 
+  const { primaryLine, secondaryLine, primaryArea, secondaryArea } = computed;
   const lastPrimary = computed.primaryPts[computed.primaryPts.length - 1];
   const activePoint = hoverIdx != null && data[hoverIdx] ? data[hoverIdx] : null;
   const activeCoord = hoverIdx != null ? computed.primaryPts[hoverIdx] : null;
@@ -212,6 +219,9 @@ export const SparklineChart: React.FC<SparklineChartProps> = ({
           }}
         >
           <div className="flex items-center gap-3 font-mono-num">
+            {formatTime && (
+              <span className="text-zinc-400">{formatTime(activePoint.ts)}</span>
+            )}
             <span className="flex items-center gap-1.5 text-zinc-200">
               <span className="h-1.5 w-1.5 rounded-full" style={{ background: primaryColor }} />
               {primaryLabel} {formatValue(activePoint.primary)}
@@ -227,4 +237,4 @@ export const SparklineChart: React.FC<SparklineChartProps> = ({
       )}
     </div>
   );
-};
+});

@@ -13,7 +13,9 @@ keep-alive-interval: 15
 
 # 统一 TLS 客户端指纹，降低特征暴露
 global-client-fingerprint: chrome
-find-process-mode: strict
+
+# 规则模板不含 PROCESS-NAME 规则，关闭进程反查避免 macOS 每条新建连接触发内核进程查询开销（若自定义了进程规则可改回 strict）
+find-process-mode: off
 
 # 域名嗅探（Sniffer）：精准还原直接用 IP 建连的 App 真实目标域名，确保 AI 防泄露与国内直连规则 100% 命中
 sniffer:

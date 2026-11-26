@@ -1,6 +1,6 @@
-use crate::models::{AppSettings, HandoffPayload, NodeConfig, NodeSecrets};
+use crate::models::{AppSettings, HandoffPayload, HistoryBucket, NodeConfig, NodeSecrets};
 use chrono::Utc;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -35,6 +35,27 @@ fn settings_file() -> PathBuf {
 
 fn secrets_file() -> PathBuf {
     config_dir().join("secrets.json")
+}
+
+fn history_file() -> PathBuf {
+    config_dir().join("history.json")
+}
+
+pub fn load_history_buckets() -> HashMap<String, VecDeque<HistoryBucket>> {
+    let path = history_file();
+    if !path.exists() {
+        return HashMap::new();
+    }
+    match fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    }
+}
+
+pub fn save_history_buckets(map: &HashMap<String, VecDeque<HistoryBucket>>) -> Result<(), String> {
+    ensure_dirs()?;
+    let json = serde_json::to_string(map).map_err(|e| e.to_string())?;
+    write_atomic_file(&history_file(), json.as_bytes(), true)
 }
 
 pub fn ensure_dirs() -> Result<(), String> {

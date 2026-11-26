@@ -85,12 +85,23 @@ export interface TelemetryPoint {
   localUpBps: number;
 }
 
+export interface HistoryBucket {
+  ts: number;
+  avgRttMs?: number | null;
+  p95RttMs?: number | null;
+  lossPct: number;
+  avgLocalDownBps: number;
+  avgVpsDownBps: number;
+  samples: number;
+}
+
 export interface AiProbeResult {
   name: string;
   host: string;
   ok: boolean;
   statusCode?: number | null;
   latencyMs?: number | null;
+  coldLatencyMs?: number | null;
   error?: string | null;
 }
 
@@ -174,4 +185,10 @@ export interface LeakCheckResult {
   ipv6Leak: boolean;
   matchesVpsIp: boolean;
   checkedAt: string;
+}
+
+export interface CachedDiagnostics {
+  aiProbes: AiProbeResult[];
+  leakResult?: LeakCheckResult | null;
+  auditReport?: AuditReport | null;
 }

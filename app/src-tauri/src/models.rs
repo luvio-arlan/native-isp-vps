@@ -131,12 +131,26 @@ pub struct TelemetryPoint {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HistoryBucket {
+    pub ts: i64,
+    pub avg_rtt_ms: Option<f64>,
+    pub p95_rtt_ms: Option<f64>,
+    pub loss_pct: f64,
+    pub avg_local_down_bps: u64,
+    pub avg_vps_down_bps: u64,
+    pub samples: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiProbeResult {
     pub name: String,
     pub host: String,
     pub ok: bool,
     pub status_code: Option<u16>,
     pub latency_ms: Option<f64>,
+    #[serde(default)]
+    pub cold_latency_ms: Option<f64>,
     pub error: Option<String>,
 }
 
@@ -256,4 +270,12 @@ pub struct LeakCheckResult {
     pub ipv6_leak: bool,
     pub matches_vps_ip: bool,
     pub checked_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedDiagnostics {
+    pub ai_probes: Vec<AiProbeResult>,
+    pub leak_result: Option<LeakCheckResult>,
+    pub audit_report: Option<AuditReport>,
 }

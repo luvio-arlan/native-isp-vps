@@ -5,6 +5,7 @@ import type {
   AppSettings,
   AuditReport,
   HandoffPayload,
+  HistoryBucket,
   LeakCheckResult,
   NodeConfig,
   TelemetrySnapshot,
@@ -126,12 +127,28 @@ function buildBrowserPreviewData() {
   };
 
   const probes: AiProbeResult[] = [
-    { name: "Anthropic API", host: "api.anthropic.com", ok: true, statusCode: 404, latencyMs: 168 },
-    { name: "OpenAI API", host: "api.openai.com", ok: true, statusCode: 401, latencyMs: 184 },
-    { name: "Gemini API", host: "generativelanguage.googleapis.com", ok: true, statusCode: 404, latencyMs: 152 },
-    { name: "GitHub API", host: "api.github.com", ok: true, statusCode: 200, latencyMs: 196 },
-    { name: "Google 204", host: "www.google.com", ok: true, statusCode: 204, latencyMs: 141 },
+    { name: "Anthropic API", host: "api.anthropic.com", ok: true, statusCode: 404, latencyMs: 168, coldLatencyMs: 318 },
+    { name: "OpenAI API", host: "api.openai.com", ok: true, statusCode: 401, latencyMs: 184, coldLatencyMs: 342 },
+    { name: "Gemini API", host: "generativelanguage.googleapis.com", ok: true, statusCode: 404, latencyMs: 152, coldLatencyMs: 289 },
+    { name: "GitHub API", host: "api.github.com", ok: true, statusCode: 200, latencyMs: 196, coldLatencyMs: 356 },
+    { name: "Google 204", host: "www.google.com", ok: true, statusCode: 204, latencyMs: 141, coldLatencyMs: 274 },
   ];
+
+  const history24h: HistoryBucket[] = Array.from({ length: 96 }, (_, idx) => {
+    const rev = 95 - idx;
+    const p = rev * 0.25;
+    const peak = rev >= 12 && rev <= 28 ? 14 : 0;
+    const avg = Math.round(133 + peak + Math.sin(p) * 4.5);
+    return {
+      ts: now - rev * 15 * 60_000,
+      avgRttMs: avg,
+      p95RttMs: Math.round(avg + 8 + Math.abs(Math.cos(p * 1.4)) * 6),
+      lossPct: 0,
+      avgLocalDownBps: Math.round(2_600_000 + Math.abs(Math.cos(p)) * 3_200_000),
+      avgVpsDownBps: Math.round(2_900_000 + Math.abs(Math.cos(p)) * 3_500_000),
+      samples: 30,
+    };
+  });
 
   const audit: AuditReport = {
     nodeId: "demo-la",
@@ -153,7 +170,7 @@ function buildBrowserPreviewData() {
     error: null,
   };
 
-  return { snapshot, probes, audit };
+  return { snapshot, probes, audit, history24h };
 }
 
 export function useTelemetry() {
@@ -164,6 +181,7 @@ export function useTelemetry() {
   const [aiProbes, setAiProbes] = useState<AiProbeResult[]>([]);
   const [leakResult, setLeakResult] = useState<LeakCheckResult | null>(null);
   const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
+  const [history24h, setHistory24h] = useState<HistoryBucket[]>([]);
   const [isProbing, setIsProbing] = useState(false);
   const [isAuditing, setIsAuditing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -190,6 +208,7 @@ export function useTelemetry() {
       setSnapshot(preview.snapshot);
       setAiProbes(preview.probes);
       setAuditReport(preview.audit);
+      setHistory24h(preview.history24h);
       setLeakResult({
         exitIpv4: "38.55.142.88",
         ipv6Leak: false,
@@ -208,15 +227,19 @@ export function useTelemetry() {
       return;
     }
     try {
-      const [n, active, snap, cfg] = await Promise.all([
+      const [n, active, snap, cfg, diag] = await Promise.all([
         api.listNodes(),
         api.getActiveNodeId(),
         api.getLatestTelemetry(),
         api.getSettings(),
+        api.getCachedDiagnostics(),
       ]);
       setNodes(n);
       setActiveNodeId(active);
       setSettings(cfg);
+      if (diag.aiProbes.length > 0) setAiProbes(diag.aiProbes);
+      if (diag.leakResult) setLeakResult(diag.leakResult);
+      if (diag.auditReport) setAuditReport(diag.auditReport);
       if (snap) {
         setSnapshot(snap);
       } else {
@@ -269,6 +292,21 @@ export function useTelemetry() {
         setSettings(cfg);
       })
     );
+    register(
+      subscribeEvent<AiProbeResult[]>("cockpit://ai-probes-updated", (probes) => {
+        setAiProbes(probes);
+      })
+    );
+    register(
+      subscribeEvent<LeakCheckResult>("cockpit://leak-updated", (leak) => {
+        setLeakResult(leak);
+      })
+    );
+    register(
+      subscribeEvent<AuditReport>("cockpit://audit-updated", (report) => {
+        setAuditReport(report);
+      })
+    );
 
     return () => {
       cancelled = true;
@@ -286,8 +324,6 @@ export function useTelemetry() {
       if (isTauriRuntime()) {
         try {
           await api.setActiveNode(id);
-          const cfg = await api.getSettings();
-          setSettings(cfg);
         } catch {
           showToast("切换节点失败");
         }
@@ -299,10 +335,7 @@ export function useTelemetry() {
   const addNode = useCallback(
     async (payload: HandoffPayload) => {
       const created = await api.upsertNode(payload);
-      const [all, cfg] = await Promise.all([api.listNodes(), api.getSettings()]);
-      setNodes(all);
       setActiveNodeId(created.id);
-      setSettings(cfg);
       showToast(`节点已安全保存至本地 0600 凭据库：${created.name}`);
       return created;
     },
@@ -314,9 +347,6 @@ export function useTelemetry() {
       try {
         const updated = await api.deleteNode(id);
         setNodes(updated);
-        const [active, cfg] = await Promise.all([api.getActiveNodeId(), api.getSettings()]);
-        setActiveNodeId(active);
-        setSettings(cfg);
         showToast("已移除节点并清理本地凭据");
       } catch {
         showToast("移除节点失败");
@@ -324,6 +354,16 @@ export function useTelemetry() {
     },
     [showToast]
   );
+
+  const loadHistory24h = useCallback(async () => {
+    if (!isTauriRuntime()) return;
+    try {
+      const buckets = await api.getHistory24h(activeNodeId ?? undefined);
+      setHistory24h(buckets);
+    } catch {
+      // Ignore transient history read error
+    }
+  }, [activeNodeId]);
 
   const runFullProbe = useCallback(async () => {
     if (!isTauriRuntime()) return;
@@ -397,6 +437,7 @@ export function useTelemetry() {
     aiProbes,
     leakResult,
     auditReport,
+    history24h,
     isProbing,
     isAuditing,
     toast,
@@ -404,6 +445,7 @@ export function useTelemetry() {
     selectNode,
     addNode,
     removeNode,
+    loadHistory24h,
     runFullProbe,
     runAudit,
     saveSettings,

@@ -42,9 +42,25 @@ description: >-
    记录 `country`、`city`、`org` 用于 Stage 3 节点命名。
 2. **写入跨洋 TCP 内核调优**：
    - 将 [sysctl-bbr-tuning.conf](./references/sysctl-bbr-tuning.conf) 写入 `/etc/sysctl.d/99-vps-tuning.conf` 并执行 `sysctl --system`。
-   - **必须热切主网卡队列为 `fq`**（否则未重启前 BBR 无法精准发包）：
+   - **必须热切并持久化主网卡队列为 `fq`**（否则未重启前 BBR 无法精准发包，且部分云镜像重启后网卡早于 sysctl 初始化会退回默认队列）：
      ```bash
-     tc qdisc replace dev $(ip route show default | awk '/default/ {print $5; exit}') root fq
+     IFACE=$(ip route show default | awk '/default/ {print $5; exit}')
+     tc qdisc replace dev "$IFACE" root fq
+     cat >/etc/systemd/system/vps-fq-qdisc.service <<'EOF'
+     [Unit]
+     Description=Ensure FQ qdisc for BBR on default interface
+     After=network-online.target
+     Wants=network-online.target
+
+     [Service]
+     Type=oneshot
+     ExecStart=/bin/sh -c 'IFACE=$(ip route show default | awk "/default/ {print \$5; exit}"); [ -n "$IFACE" ] && /sbin/tc qdisc replace dev "$IFACE" root fq'
+     RemainAfterExit=yes
+
+     [Install]
+     WantedBy=multi-user.target
+     EOF
+     systemctl daemon-reload && systemctl enable --now vps-fq-qdisc.service
      tc qdisc show
      ```
    - 关键参数说明：1GB 级小内存保持 `256KB` 默认 / `16MB` 上限缓冲（2GB+ 千兆口可升至 `32MB`）；`tcp_fastopen=0` & `tcp_ecn=0` 避免国内运营商 SYN 黑洞；`tcp_keepalive_time=120` 防止 NAT 静默断连；`tcp_mtu_probing=1` + `tcp_slow_start_after_idle=0` + `tcp_notsent_lowat=16384` 降低交互延迟。
@@ -129,7 +145,8 @@ description: >-
    - `subClashEnableRouting = 'true'`，`subClashAutoDetect = 'true'`，`subClashRemoteDNS = 'true'`
    - `subTitle`：提前写入静态标题（确保首次导入自动命名卡片）
    - `remarkTemplate = '{{INBOUND}} · Reality'`
-   - `subClashRules`：顶部写入 `IP-CIDR,<VPS_IP>/32,DIRECT,no-resolve`，紧接 [mihomo-rules.yaml](./references/mihomo-rules.yaml) 全部规则（禁代理内 QUIC UDP/443 + 全系海外 AI 强制代理 + Google Play CDN + 国内直连；`MATCH,PROXY` 由面板兜底）。
+   - `subClashRules`：顶部写入 `IP-CIDR,<VPS_IP>/32,DIRECT,no-resolve`，紧接 [mihomo-rules.yaml](./references/mihomo-rules.yaml) 全部规则（禁代理内 QUIC UDP/443 + 全系海外 AI 强制代理 + Google Play CDN + 国内直连且 `GEOIP` 强制带 `no-resolve` 保住 Fake-IP 秒发；`MATCH,PROXY` 由面板兜底）。
+   - **多节点防封容灾建议（若有备机）**：对 Claude/OpenAI 等严控出口 IP 稳定性的 AI 服务，严禁使用 `load-balance` 或激进 `url-test`；应配置高粘性 `fallback` 策略组（`interval: 300`，仅主节点不可达时自动切备机）。
 2. **公网地址输出避坑**：不要设置 `subDomain`（否则本机 `127.0.0.1` 验真报 `403`）；在 `inbounds` 表设置 `share_addr_strategy = 'custom'`、`share_addr = '<VPS_IP>'`。
 3. **清理临时文件并重启**：
    ```bash

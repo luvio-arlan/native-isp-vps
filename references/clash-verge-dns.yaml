@@ -17,6 +17,7 @@ dns:
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
   fake-ip-filter-mode: blacklist
+  cache-algorithm: arc
   prefer-h3: false
   respect-rules: true
   use-hosts: false
