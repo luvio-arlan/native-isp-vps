@@ -1,0 +1,166 @@
+---
+name: native-isp-vps
+description: >-
+  面向 AI 开发者的海外 VPS 全自动部署与网络稳定调优 Agent Skill。
+  闭环覆盖「需求引导 → VPS 选型 → SSH 内核调优（FQ+BBR+1GB 友好缓冲+禁 TFO/ECN+120s 保活）→ 3x-ui 非交互部署 → 纯 TCP VLESS+Reality+Vision 与 Xray sockopt/DNS 缓存加固 → 全平台防泄露/禁 QUIC 万能订阅 → 本机 Clash Verge Rev 加固与端到端验真」。
+  在以下场景主动激活：自建独享海外节点、优化现有 VPS 断流/延迟、稳定使用海外 AI 工具，或一键生成全平台防泄露订阅与本机 Clash Verge Rev 加固时。
+---
+
+# Native ISP VPS · 海外 VPS 全自动部署与调优
+
+> **核心方案**：纯 TCP `VLESS + Reality + Vision (443/tcp)` + 跨洋 TCP/BBR/FQ 内核调优 + Xray `sockopt`/DNS 缓存 + 禁代理内 QUIC UDP/443 + 全平台防泄露万能订阅 + 本机 Clash Verge Rev 并发保活加固。零手工踩坑，全天候高稳不断流。
+
+---
+
+## Stage 0 · 交互式需求引导（未提供完整信息时先问清）
+
+一次性向用户确认以下信息：
+
+1. **是否已购买 VPS？**
+   - **未购买**：读取并分享 [vps-guide.md](./references/vps-guide.md)，建议选择 **Debian 11 / 12 (x86_64)** + 独立公网 IPv4，买好后提供登录凭证即可。
+   - **已购买**：收集：
+     - **SSH 凭证**：IP、端口（默认 22）、用户名（通常 `root`）、密码或私钥路径
+     - **用户与流量配额**：独立订阅数量与备注（如 `Me`、`GF`）、VPS 月总流量（如 `1TB`）、每人分配额度、账单重置日（如每月 `25` 号），用于 Clash 卡片显示剩余流量进度条
+     - **本机加固**：是否顺手自动优化本机 Clash Verge Rev（禁 IPv6、Fake-IP DoH、TUN `Mixed` + `Merge` 并发保活）
+
+> [!IMPORTANT]
+> **安全边界**：SSH 密码、3x-ui 账密、UUID 与 Sub ID 严禁写入 Git 仓库或公开文档，交付后提醒用户存入密码管理器。
+
+---
+
+## Stage 1 · 系统验真、内核调优、冗余 DNS 与 Swap
+
+通过 SSH（优先密钥或 `SSH_ASKPASS`/`expect` 免交互）登录后一次执行：
+
+1. **验真系统、硬件、IP 归属与带宽**：
+   ```bash
+   cat /etc/os-release | grep PRETTY_NAME
+   uname -a && free -h && nproc
+   curl -s https://ipinfo.io
+   curl -s -o /dev/null -w "CF 25MB down: %{speed_download} B/s (time=%{time_total}s)\n" "https://speed.cloudflare.com/__down?bytes=25000000"
+   ```
+   记录 `country`、`city`、`org` 用于 Stage 3 节点命名。
+2. **写入跨洋 TCP 内核调优**：
+   - 将 [sysctl-bbr-tuning.conf](./references/sysctl-bbr-tuning.conf) 写入 `/etc/sysctl.d/99-vps-tuning.conf` 并执行 `sysctl --system`。
+   - **必须热切主网卡队列为 `fq`**（否则未重启前 BBR 无法精准发包）：
+     ```bash
+     tc qdisc replace dev $(ip route show default | awk '/default/ {print $5; exit}') root fq
+     tc qdisc show
+     ```
+   - 关键参数说明：1GB 级小内存保持 `256KB` 默认 / `16MB` 上限缓冲（2GB+ 千兆口可升至 `32MB`）；`tcp_fastopen=0` & `tcp_ecn=0` 避免国内运营商 SYN 黑洞；`tcp_keepalive_time=120` 防止 NAT 静默断连；`tcp_mtu_probing=1` + `tcp_slow_start_after_idle=0` + `tcp_notsent_lowat=16384` 降低交互延迟。
+3. **加固 `/etc/resolv.conf` 冗余 DNS**：
+   ```text
+   nameserver 1.1.1.1
+   nameserver 8.8.8.8
+   nameserver 1.0.0.1
+   options timeout:2 attempts:2 rotate
+   ```
+4. **小内存自动加 1GB Swap**：检查 `swapon --show`，若无 Swap 且磁盘充足，创建 1GB `/swapfile`（`chmod 600`、`mkswap`、`swapon` 并写入 `/etc/fstab`）。
+5. **检查端口**：确认 `443/tcp` 未被占用。
+
+---
+
+## Stage 2 · 非交互安装 3x-ui 面板
+
+1. 安装依赖：`apt-get update && apt-get install -y curl wget sqlite3 jq tar tzdata openssl ca-certificates`
+2. 非交互安装最新官方 3x-ui：
+   ```bash
+   curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/3x-ui-install.sh
+   export DEBIAN_FRONTEND=noninteractive XUI_NONINTERACTIVE=1 XUI_SSL_MODE=none XUI_DB_TYPE=sqlite XUI_SERVER_IP="<VPS_IP>" XUI_ENABLE_FAIL2BAN=false
+   bash /tmp/3x-ui-install.sh
+   ```
+3. 从输出或 `/etc/x-ui/install-result.env` 提取 `Username`、`Password`、`Port`、`WebBasePath`、`Access URL`、`API Token`。
+4. 确认 `systemctl is-active x-ui` 为 `active`，面板端口与订阅端口（默认 `2096`）已监听。
+
+---
+
+## Stage 3 · 部署纯 TCP VLESS + Reality + Vision 与安全加固
+
+统一使用 **纯 TCP `VLESS + Reality + Vision (443/tcp)`**——每条连接独立 TCP 互不连坐、零白天 UDP QoS 断流、全端免脚本开箱即稳。
+
+1. **自动优选低延迟 Reality 伪装目标**（避开 `www.apple.com`）：
+   - 实测 `www.cisco.com`、`www.oracle.com`、`www.shopify.com`、`www.microsoft.com`、`aws.amazon.com`、`www.datadoghq.com`：
+     ```bash
+     curl -sI --http2 --tlsv1.3 --max-time 3 -w "code=%{http_code} ver=%{http_version} t_conn=%{time_connect} t_tls=%{time_appconnect}\n" -o /dev/null "https://$d"
+     ```
+   - 选择 `HTTP 200`、`HTTP/2`、`TLS 1.3` 且 `t_conn` 最低的域名作为 Reality `target` / `serverNames`。
+2. **静态极简命名**：
+   - 基于 `ipinfo.io` 生成 `"<国旗Emoji> <City> · Dual ISP"`（如 `🇺🇸 Los Angeles · Dual ISP`，非双 ISP 用 `Native` 或 `VPS`），写入入站 `remark` 与 `settings.subTitle`。
+   - `settings.remarkTemplate` 固定为 **`{{INBOUND}} · Reality`**（严禁写入动态流量变量，以免破坏 Clash `store-selected` 记忆；剩余流量由 `Subscription-Userinfo` 进度条展示）。
+   - *写入 SQLite 时使用 Python ASCII Unicode 转义防止终端 Emoji 乱码。*
+3. **生成密钥与用户凭证**：
+   - 调用 `GET http://127.0.0.1:<PANEL_PORT>/<WEB_BASE_PATH>/panel/api/server/getNewX25519Cert`（Header: `Authorization: Bearer <API_TOKEN>`）生成 Reality `privateKey` / `publicKey`。
+   - 为每位用户生成独立 `UUID`（`/proc/sys/kernel/random/uuid`）与 16 位 `Sub ID`（`openssl rand -hex 8`）；生成 2 个 `Short IDs`（`openssl rand -hex 4`、`openssl rand -hex 8`）。
+4. **创建入站并写入生产级 Xray 配置**：
+   - 入站参数：`vless` · `443/tcp` · `reality` · uTLS `chrome` · `spiderX: "/"`；每个客户端 `enable: true`、`flow: "xtls-rprx-vision"`、独立 `email`/`id`/`subId`、`limitIp: 0`。
+   - **入站 `streamSettings.sockopt`**（20s 淘汰僵尸 Socket 触发秒重连）：
+     ```json
+     "sockopt": {
+       "tcpFastOpen": false,
+       "tcpNoDelay": true,
+       "tcpKeepAliveIdle": 60,
+       "tcpKeepAliveInterval": 15,
+       "tcpUserTimeout": 20000,
+       "tcpcongestion": "bbr"
+     }
+     ```
+   - **流量配额与自动重置**：按字节写入 `totalGB`（如 `1000GB = 1073741824000`），同步更新 `clients`（`total_gb`, `traffic_reset='monthly'`, `traffic_reset_day`）与 `client_traffics`（`total`, `reset_day`）。
+   - **强化 `settings.xrayTemplateConfig`**：
+     1. 内置缓存 DNS：`"dns": {"servers": ["1.1.1.1", "8.8.8.8"], "queryStrategy": "UseIPv4", "disableCache": false}`
+     2. 长连接 Policy：`policy.levels.0` 写入 `"handshake": 4, "connIdle": 600, "uplinkOnly": 2, "downlinkOnly": 5`（保留 `statsUser*`）
+     3. 路由防 BT：`{"type":"field","protocol":["bittorrent"],"outboundTag":"blocked"}`
+     4. 纯 IPv4 出站保活：无 IPv6 出口的 VPS 在 `direct`（`freedom`）出站配置 `"domainStrategy": "UseIPv4"` 及 `sockopt`（`tcpNoDelay: true`, `tcpKeepAliveIdle: 60`, `tcpKeepAliveInterval: 15`）
+5. **最小暴露安全加固（UFW + Fail2ban）**：
+   - 安装 `ufw` 与 `fail2ban`，仅放行 SSH 端口、`443/tcp`、订阅端口（`2096/tcp`）、面板端口（`<PANEL_PORT>/tcp`），再执行 `ufw --force enable && systemctl enable ufw`。
+   - `/etc/fail2ban/jail.local` 守护实际 SSH 端口，显式配置 `backend = systemd`、`bantime = 1h`、`findtime = 10m`、`maxretry = 5`。
+6. **服务端核验**：
+   - `/usr/local/x-ui/bin/xray-linux-amd64 run -test -c /usr/local/x-ui/bin/config.json` → `Configuration OK`
+   - 确认 `tc qdisc show` 为 `fq`、`ss -tulpn` 监听 `443/tcp`、`ufw status` 与 `fail2ban-client status sshd` 正常。
+
+---
+
+## Stage 4 · 配置全平台万能订阅与防泄露分流
+
+利用 3x-ui v3.11+ 原生 Clash/Mihomo 订阅（无需 subconverter）：
+
+1. **写入 SQLite `/etc/x-ui/x-ui.db` 的 `settings` 表**：
+   - `subEnable = 'true'`，`subPort = '2096'`
+   - `subClashEnable = 'true'`，`subClashPath = '/mihomo/'`
+   - `subClashEnableRouting = 'true'`，`subClashAutoDetect = 'true'`，`subClashRemoteDNS = 'true'`
+   - `subTitle`：提前写入静态标题（确保首次导入自动命名卡片）
+   - `remarkTemplate = '{{INBOUND}} · Reality'`
+   - `subClashRules`：顶部写入 `IP-CIDR,<VPS_IP>/32,DIRECT,no-resolve`，紧接 [mihomo-rules.yaml](./references/mihomo-rules.yaml) 全部规则（禁代理内 QUIC UDP/443 + 全系海外 AI 强制代理 + Google Play CDN + 国内直连；`MATCH,PROXY` 由面板兜底）。
+2. **公网地址输出避坑**：不要设置 `subDomain`（否则本机 `127.0.0.1` 验真报 `403`）；在 `inbounds` 表设置 `share_addr_strategy = 'custom'`、`share_addr = '<VPS_IP>'`。
+3. **清理临时文件并重启**：
+   ```bash
+   rm -f /tmp/3x-ui-install.sh /tmp/inbound.json /tmp/cookies.txt
+   systemctl restart x-ui
+   ```
+4. **双端验真**：
+   - VPS 本机：`curl -s http://127.0.0.1:2096/mihomo/<SubID>` 确认 YAML 合法、节点名静态、含禁 QUIC 规则、`server` 为公网 IP。
+   - 用户本机外网：
+     - `curl -sI -A "clash-verge/v2.5.10" http://<VPS_IP>:2096/<subPath>/<SubID>` → `200 OK`、`application/yaml`、含 `Profile-Title` 与 `Subscription-Userinfo`
+     - `curl -sI -A "Shadowrocket/2400" http://<VPS_IP>:2096/<subPath>/<SubID>` → `200 OK`、`text/plain`（Base64 VLESS）
+     - `nc -vz -G 5 <VPS_IP> 443` 确认 `443/tcp` 可达。
+
+---
+
+## Stage 5 · 交付、本机 Clash Verge Rev 加固与速查排障
+
+1. **清晰交付**：
+   - **全平台万能订阅（首选）**：`http://<VPS_IP>:2096/<subPath>/<SubID>`（自动识别 Clash Verge Rev / FlClash / Stash 下发完整 YAML；Shadowrocket / v2rayNG 下发 Base64 VLESS）
+   - **强制 Clash YAML 备用链**：`http://<VPS_IP>:2096/mihomo/<SubID>`
+   - **移动端要点**：iPhone 小火箭路由选「配置」并关 IPv6；安卓 FlClash 开 Fake-IP 覆写并关 IPv6；支持多设备同时在线。
+   - 附 3x-ui 管理后台地址、账密及核验摘要，提醒妥善保存。
+2. **本机 Clash Verge Rev 自动加固（macOS 默认路径 `~/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/`）**：
+   - 在**单条脚本内**完成：优雅退出 → 备份配置 → 修改 → 刷新 DNS 缓存 → 重新启动（防止中途断网失联）：
+     1. 锁定 `ipv6: false`、`tun.strict-route: true`、`tun.stack: mixed`（切勿使用 `mips`）、`dns-hijack: [any:53, tcp://any:53]`；
+     2. 将 [clash-verge-merge.yaml](./references/clash-verge-merge.yaml) 写入当前订阅绑定的 `profiles/<merge_uid>.yaml`（永久开启 `tcp-concurrent`、15s 保活与 `sniffer`）；
+     3. 在 `verge.yaml` 开启 `enable_dns_settings: true`，按 [clash-verge-dns.yaml](./references/clash-verge-dns.yaml) 写入 `dns_config.yaml`；
+     4. 执行 `dscacheutil -flushcache` 并 `open -a "Clash Verge"`。
+   - **端到端验真**：经 Mihomo Unix Socket（`/var/run/clash-verge-service/users/<UID>/verge-mihomo.sock`）核验配置生效；验证 `curl -4 https://ipinfo.io/ip` 为 VPS IP、`curl -6 --max-time 3 https://ipinfo.io/ip` 无 IPv6 泄露、`https://www.baidu.com` 直连 `200 OK`、`https://api.anthropic.com` 稳定连通。
+   - **日常最优开关**：TUN ✅开（`Mixed`）、系统代理 ❌关、DNS 覆写 ✅开、IPv6 ❌关、统一延迟 ✅开、模式 **规则（Rule）**。
+3. **3 步断流/超时速查**：
+   1. 查客户端：确认 `tun.stack` 为 `mixed`、存在 `AND,((NETWORK,UDP),(DST-PORT,443)),REJECT` 规则、`Merge` 的 `tcp-concurrent` 与 `keep-alive-idle: 15` 已生效；
+   2. 查内核：确认 `tc qdisc show` 为 `fq`、`tcp_fastopen=0`、`tcp_ecn=0`、`tcp_keepalive_time=120`；
+   3. 查 Xray 与资源：确认 Xray 内置 `1.1.1.1+8.8.8.8` 缓存 DNS 正常、`free -h` 内存与 Swap 健康。

@@ -1,0 +1,65 @@
+# Mihomo / Clash Verge Rev 分流规则模板（3x-ui subClashRules 专用）
+# 说明：
+# 1. 规则自上而下匹配：先放行 VPS 自身 IP 防自锁，再拦截代理隧道内的 HTTP/3 QUIC (UDP 443) 强制走更稳的 HTTP/2 TCP，
+#    随后 AI 防泄露规则排在国内直连规则之前，避免被任何直连/GEOIP 规则误伤。
+# 2. 在 3x-ui v3.11+ 的 subClashRules 设置中，直接粘贴以下每一行规则（去掉注释行）。
+# 3. 3x-ui 会自动在末尾追加兜底规则：MATCH,PROXY（代理组名默认 PROXY）。
+
+# === 0. VPS 自身 IP 直连（部署时将 <VPS_IP> 替换为真实 IP，防止刷新订阅/登面板自锁）===
+# IP-CIDR,<VPS_IP>/32,DIRECT,no-resolve
+
+# === 0.5 拦截代理内 QUIC UDP/443（全场景提速防卡顿关键规则）===
+# 浏览器访问 Google/YouTube/Claude 时默认优先尝试 HTTP/3 (UDP/443)，经 TCP 代理封装 UDP 会导致额外延迟、卡顿与高耗电；
+# REJECT UDP/443 可让浏览器 0ms 回退到原生 HTTP/2 over TCP Reality，大幅提升打开速度与稳定性（不影响代理本身与音视频通话）。
+AND,((NETWORK,UDP),(DST-PORT,443)),REJECT
+
+# === 1. Claude / Anthropic 防泄露（最高优先级强制走代理）===
+DOMAIN-SUFFIX,anthropic.com,PROXY
+DOMAIN-SUFFIX,claude.ai,PROXY
+DOMAIN-SUFFIX,claude.com,PROXY
+DOMAIN-SUFFIX,claudeusercontent.com,PROXY
+DOMAIN-SUFFIX,clau.de,PROXY
+DOMAIN-KEYWORD,anthropic,PROXY
+DOMAIN-KEYWORD,claude,PROXY
+
+# === 2. 主流海外 AI 工具强制代理 ===
+DOMAIN-SUFFIX,openai.com,PROXY
+DOMAIN-SUFFIX,chatgpt.com,PROXY
+DOMAIN-SUFFIX,oaistatic.com,PROXY
+DOMAIN-SUFFIX,oaiusercontent.com,PROXY
+DOMAIN-SUFFIX,sora.com,PROXY
+DOMAIN-SUFFIX,ai.com,PROXY
+DOMAIN-SUFFIX,gemini.google.com,PROXY
+DOMAIN-SUFFIX,generativelanguage.googleapis.com,PROXY
+DOMAIN-SUFFIX,aistudio.google.com,PROXY
+DOMAIN-SUFFIX,ai.google.dev,PROXY
+DOMAIN-SUFFIX,deepmind.com,PROXY
+DOMAIN-SUFFIX,deepmind.google,PROXY
+DOMAIN-SUFFIX,notebooklm.google.com,PROXY
+DOMAIN-SUFFIX,labs.google,PROXY
+DOMAIN-SUFFIX,perplexity.ai,PROXY
+DOMAIN-SUFFIX,x.ai,PROXY
+DOMAIN-SUFFIX,grok.com,PROXY
+DOMAIN-SUFFIX,cursor.sh,PROXY
+DOMAIN-SUFFIX,cursor.com,PROXY
+DOMAIN-SUFFIX,codeium.com,PROXY
+DOMAIN-SUFFIX,windsurf.com,PROXY
+DOMAIN-SUFFIX,githubcopilot.com,PROXY
+
+# === 2.5 Google Play 与海外下载 CDN 强制代理（防安卓 5G 卡下载）===
+DOMAIN-SUFFIX,gvt1.com,PROXY
+DOMAIN-SUFFIX,gvt2.com,PROXY
+DOMAIN-SUFFIX,gvt3.com,PROXY
+DOMAIN-SUFFIX,dl.google.com,PROXY
+DOMAIN-SUFFIX,googleapis.com,PROXY
+DOMAIN-SUFFIX,googleapis.cn,PROXY
+DOMAIN-SUFFIX,xn--ngstr-lra8j.com,PROXY
+DOMAIN-SUFFIX,play.google.com,PROXY
+DOMAIN-SUFFIX,ggpht.com,PROXY
+DOMAIN-SUFFIX,googleusercontent.com,PROXY
+
+# === 3. 国内域名与国内/局域网 IP 直连（不绕路、不减速）===
+DOMAIN-SUFFIX,cn,DIRECT
+GEOSITE,CN,DIRECT
+GEOIP,PRIVATE,DIRECT,no-resolve
+GEOIP,CN,DIRECT
