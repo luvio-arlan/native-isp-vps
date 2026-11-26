@@ -148,6 +148,8 @@ pub struct LocalShieldStatus {
     pub mode: String,
     pub local_up_bps: u64,
     pub local_down_bps: u64,
+    pub local_up_total: u64,
+    pub local_down_total: u64,
     pub active_connections: usize,
     pub proxy_connections: usize,
     pub direct_connections: usize,

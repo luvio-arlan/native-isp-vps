@@ -100,6 +100,8 @@ export interface LocalShieldStatus {
   mode: string;
   localUpBps: number;
   localDownBps: number;
+  localUpTotal: number;
+  localDownTotal: number;
   activeConnections: number;
   proxyConnections: number;
   directConnections: number;

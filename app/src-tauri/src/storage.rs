@@ -1,10 +1,16 @@
 use crate::models::{AppSettings, HandoffPayload, NodeConfig, NodeSecrets};
 use chrono::Utc;
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
-const KEYRING_SERVICE: &str = "dev.luvio.native-isp-cockpit";
+// NOTE: Do NOT use macOS Keychain (`keyring`) for ad-hoc / unsigned desktop builds.
+// Ad-hoc binaries cannot reliably persist "Always Allow" ACLs in macOS Keychain,
+// causing repeated password prompts on every poll tick. Keep secrets in an in-memory
+// cache backed by a 0600 local file (`~/.config/native-isp-vps/secrets.json`).
+static SECRETS_CACHE: OnceLock<Mutex<HashMap<String, NodeSecrets>>> = OnceLock::new();
 
 pub fn config_dir() -> PathBuf {
     let base = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -25,6 +31,10 @@ fn nodes_file() -> PathBuf {
 
 fn settings_file() -> PathBuf {
     config_dir().join("settings.json")
+}
+
+fn secrets_file() -> PathBuf {
+    config_dir().join("secrets.json")
 }
 
 pub fn ensure_dirs() -> Result<(), String> {
@@ -86,33 +96,71 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     fs::write(settings_file(), json).map_err(|e| format!("write settings.json failed: {e}"))
 }
 
+fn load_secrets_map_from_disk() -> HashMap<String, NodeSecrets> {
+    let path = secrets_file();
+    if !path.exists() {
+        return HashMap::new();
+    }
+    match fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    }
+}
+
+fn write_secrets_map_to_disk(map: &HashMap<String, NodeSecrets>) -> Result<(), String> {
+    ensure_dirs()?;
+    let json = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
+    let path = secrets_file();
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| format!("open secrets.json failed: {e}"))?;
+        file.write_all(json.as_bytes())
+            .map_err(|e| format!("write secrets.json failed: {e}"))?;
+        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(&path, json).map_err(|e| format!("write secrets.json failed: {e}"))?;
+    }
+    Ok(())
+}
+
+fn secrets_cache() -> &'static Mutex<HashMap<String, NodeSecrets>> {
+    SECRETS_CACHE.get_or_init(|| Mutex::new(load_secrets_map_from_disk()))
+}
+
 pub fn save_secrets(node_id: &str, secrets: &NodeSecrets) -> Result<(), String> {
     if secrets.api_token.is_none() && secrets.panel_password.is_none() {
         return Ok(());
     }
-    let key = format!("node-{}", node_id);
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| e.to_string())?;
-    let payload = serde_json::to_string(secrets).map_err(|e| e.to_string())?;
-    entry
-        .set_password(&payload)
-        .map_err(|e| format!("keychain write failed: {e}"))
+    let mut cache = secrets_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.insert(node_id.to_string(), secrets.clone());
+    write_secrets_map_to_disk(&cache)
 }
 
 pub fn load_secrets(node_id: &str) -> NodeSecrets {
-    let key = format!("node-{}", node_id);
-    let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &key) else {
-        return NodeSecrets::default();
-    };
-    match entry.get_password() {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(_) => NodeSecrets::default(),
-    }
+    let cache = secrets_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.get(node_id).cloned().unwrap_or_default()
 }
 
 pub fn delete_secrets(node_id: &str) {
-    let key = format!("node-{}", node_id);
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &key) {
-        let _ = entry.delete_credential();
+    let mut cache = secrets_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if cache.remove(node_id).is_some() {
+        let _ = write_secrets_map_to_disk(&cache);
     }
 }
 

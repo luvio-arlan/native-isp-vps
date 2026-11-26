@@ -212,6 +212,8 @@ async fn build_demo_snapshot(
         shield.mode = "rule".to_string();
         shield.local_down_bps = local_down;
         shield.local_up_bps = local_up;
+        shield.local_up_total = 1_240_000_000;
+        shield.local_down_total = 6_820_000_000;
         shield.active_connections = 34;
         shield.proxy_connections = 21;
         shield.direct_connections = 13;
@@ -314,7 +316,7 @@ async fn poll_once(app: &AppHandle, state: &CockpitState) {
                 .notification()
                 .builder()
                 .title("VPS 节点已自动接入看板")
-                .body(format!("{} ({}) 已完成密钥链加密纳管", node.name, node.host))
+                .body(format!("{} ({}) 已完成本地安全纳管", node.name, node.host))
                 .show();
         }
     }
@@ -335,7 +337,7 @@ async fn poll_once(app: &AppHandle, state: &CockpitState) {
     } else if let Some(node) = active_node {
         let secrets = storage::load_secrets(&node.id);
         let (rtt_ms, (xui, clients), mut shield) = tokio::join!(
-            local_probe::tcping(&node.host, node.vless_port),
+            local_probe::probe_real_rtt(&node.host, node.vless_port, node.ssh_port, &node.panel_url),
             xui::fetch_xui_telemetry(&node, &secrets),
             local_probe::probe_local_shield(Some(&node.host))
         );

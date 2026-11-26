@@ -2,7 +2,10 @@ use crate::models::{ClientQuota, NodeConfig, NodeSecrets, XuiStatus};
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+
+static XUI_CLIENTS: OnceLock<Mutex<HashMap<String, Client>>> = OnceLock::new();
 
 fn build_client() -> Result<Client, String> {
     Client::builder()
@@ -12,6 +15,17 @@ fn build_client() -> Result<Client, String> {
         .connect_timeout(Duration::from_secs(4))
         .build()
         .map_err(|e| format!("http client error: {e}"))
+}
+
+fn get_or_create_client(cache_key: &str) -> Result<Client, String> {
+    let map = XUI_CLIENTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(c) = guard.get(cache_key) {
+        return Ok(c.clone());
+    }
+    let client = build_client()?;
+    guard.insert(cache_key.to_string(), client.clone());
+    Ok(client)
 }
 
 async fn login_with_cookie(
@@ -88,7 +102,27 @@ pub async fn fetch_xui_telemetry(
         return (status, Vec::new());
     }
 
-    let client = match build_client() {
+    let has_token = secrets
+        .api_token
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty());
+    let has_creds = node
+        .panel_username
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty())
+        && secrets
+            .panel_password
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty());
+
+    if !has_token && !has_creds {
+        status.error = Some("缺少 3x-ui 面板密码/Token，请在「接入节点」重新填入密码".to_string());
+        return (status, Vec::new());
+    }
+
+    let base = node.panel_url.trim_end_matches('/');
+    let cache_key = format!("{}::{}", node.id, base);
+    let client = match get_or_create_client(&cache_key) {
         Ok(c) => c,
         Err(e) => {
             status.error = Some(e);
@@ -96,15 +130,19 @@ pub async fn fetch_xui_telemetry(
         }
     };
 
-    let base = node.panel_url.trim_end_matches('/');
     let status_url = format!("{}/panel/api/server/status", base);
+    let legacy_status_url = format!("{}/server/status", base);
     let inbounds_url = format!("{}/panel/api/inbounds/list", base);
     let onlines_url = format!("{}/panel/api/inbounds/onlines", base);
 
-    let mut active_token = secrets.api_token.as_deref();
+    let mut active_token = secrets
+        .api_token
+        .as_deref()
+        .filter(|s| !s.trim().is_empty());
 
-    // Try Bearer token first if available
-    let status_json = match fetch_authed_json(&client, &status_url, false, active_token).await {
+    // Try existing cookie session or Bearer token first
+    let first_try = fetch_authed_json(&client, &status_url, false, active_token).await;
+    let status_json = match first_try {
         Ok(v) if v.get("success").and_then(|s| s.as_bool()) == Some(true) => Ok(v),
         first_err => {
             // Fall back to username/password cookie login
@@ -116,7 +154,10 @@ pub async fn fetch_xui_telemetry(
                     Err(login_err)
                 } else {
                     active_token = None;
-                    fetch_authed_json(&client, &status_url, false, None).await
+                    match fetch_authed_json(&client, &status_url, false, None).await {
+                        Ok(v) if v.get("success").and_then(|s| s.as_bool()) == Some(true) => Ok(v),
+                        _ => fetch_authed_json(&client, &legacy_status_url, true, None).await,
+                    }
                 }
             } else {
                 match first_err {

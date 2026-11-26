@@ -107,6 +107,8 @@ function buildBrowserPreviewData() {
       mode: "rule",
       localUpBps: last.localUpBps,
       localDownBps: last.localDownBps,
+      localUpTotal: 1_240_000_000,
+      localDownTotal: 6_820_000_000,
       activeConnections: 38,
       proxyConnections: 24,
       directConnections: 14,

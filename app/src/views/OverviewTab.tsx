@@ -148,11 +148,27 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
           <div className="mt-3 flex items-center justify-between border-t border-white/6 pt-3 text-[11px] text-zinc-400">
             <div className="flex items-center gap-4 font-mono-num">
-              <span>累计发送 {formatBytes(xui?.netSentTotal ?? 0)}</span>
-              <span>累计接收 {formatBytes(xui?.netRecvTotal ?? 0)}</span>
+              <span>
+                累计发送{" "}
+                {formatBytes(
+                  useLocal
+                    ? snapshot?.localShield.localUpTotal ?? 0
+                    : xui?.netSentTotal ?? 0
+                )}
+              </span>
+              <span>
+                累计接收{" "}
+                {formatBytes(
+                  useLocal
+                    ? snapshot?.localShield.localDownTotal ?? 0
+                    : xui?.netRecvTotal ?? 0
+                )}
+              </span>
             </div>
             <div className="font-mono-num text-zinc-500">
-              TCP {xui?.tcpCount ?? 0} · UDP {xui?.udpCount ?? 0}
+              {useLocal
+                ? `代理 ${snapshot?.localShield.proxyConnections ?? 0} · 直连 ${snapshot?.localShield.directConnections ?? 0}`
+                : `TCP ${xui?.tcpCount ?? 0} · UDP ${xui?.udpCount ?? 0}`}
             </div>
           </div>
         </div>

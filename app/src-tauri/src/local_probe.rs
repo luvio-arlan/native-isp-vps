@@ -8,8 +8,156 @@ use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 
 static PREV_TRAFFIC: Mutex<Option<(Instant, u64, u64)>> = Mutex::new(None);
+#[derive(Clone, Copy)]
+struct LiveTrafficSample {
+    updated_at: Instant,
+    up_bps: u64,
+    down_bps: u64,
+    up_total: u64,
+    down_total: u64,
+}
+static LIVE_TRAFFIC: Mutex<Option<LiveTrafficSample>> = Mutex::new(None);
+static TRAFFIC_STREAM_STARTED: OnceLock<()> = OnceLock::new();
 #[cfg(unix)]
 static CURRENT_UID: OnceLock<String> = OnceLock::new();
+
+fn update_live_traffic_line(line: &str) {
+    let trimmed = line.trim();
+    let Some(start) = trimmed.find('{') else {
+        return;
+    };
+    let Some(end) = trimmed.rfind('}') else {
+        return;
+    };
+    if end <= start {
+        return;
+    }
+    if let Ok(val) = serde_json::from_str::<Value>(&trimmed[start..=end]) {
+        let up = val.get("up").and_then(|v| v.as_u64()).unwrap_or(0);
+        let down = val.get("down").and_then(|v| v.as_u64()).unwrap_or(0);
+        let up_total = val.get("upTotal").and_then(|v| v.as_u64()).unwrap_or(0);
+        let down_total = val.get("downTotal").and_then(|v| v.as_u64()).unwrap_or(0);
+        if let Ok(mut guard) = LIVE_TRAFFIC.lock() {
+            *guard = Some(LiveTrafficSample {
+                updated_at: Instant::now(),
+                up_bps: up,
+                down_bps: down,
+                up_total,
+                down_total,
+            });
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn stream_unix_traffic(sock_path: &PathBuf) -> Result<(), String> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixStream;
+
+    let mut stream = tokio::time::timeout(Duration::from_secs(2), UnixStream::connect(sock_path))
+        .await
+        .map_err(|_| "unix traffic connect timeout".to_string())?
+        .map_err(|e| e.to_string())?;
+
+    stream
+        .write_all(b"GET /traffic HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n")
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = tokio::time::timeout(Duration::from_secs(3), reader.read_line(&mut line))
+            .await
+            .map_err(|_| "unix traffic header timeout".to_string())?
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("unix traffic eof".to_string());
+        }
+        if line == "\r\n" || line == "\n" {
+            break;
+        }
+    }
+
+    loop {
+        line.clear();
+        let n = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .map_err(|_| "unix traffic read timeout".to_string())?
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("unix traffic closed".to_string());
+        }
+        if line.contains('{') {
+            update_live_traffic_line(&line);
+        }
+    }
+}
+
+async fn stream_http_traffic() -> Result<(), String> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let mut stream =
+        tokio::time::timeout(Duration::from_secs(2), TcpStream::connect("127.0.0.1:9097"))
+            .await
+            .map_err(|_| "http traffic connect timeout".to_string())?
+            .map_err(|e| e.to_string())?;
+
+    stream
+        .write_all(b"GET /traffic HTTP/1.1\r\nHost: 127.0.0.1:9097\r\nConnection: keep-alive\r\n\r\n")
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = tokio::time::timeout(Duration::from_secs(3), reader.read_line(&mut line))
+            .await
+            .map_err(|_| "http traffic header timeout".to_string())?
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("http traffic eof".to_string());
+        }
+        if line == "\r\n" || line == "\n" {
+            break;
+        }
+    }
+
+    loop {
+        line.clear();
+        let n = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .map_err(|_| "http traffic read timeout".to_string())?
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("http traffic closed".to_string());
+        }
+        if line.contains('{') {
+            update_live_traffic_line(&line);
+        }
+    }
+}
+
+fn ensure_traffic_stream() {
+    TRAFFIC_STREAM_STARTED.get_or_init(|| {
+        tokio::spawn(async move {
+            loop {
+                #[cfg(unix)]
+                {
+                    if let Some(sock) = find_mihomo_socket() {
+                        let _ = stream_unix_traffic(&sock).await;
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                }
+                let _ = stream_http_traffic().await;
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        });
+    });
+}
 
 pub async fn tcping(host: &str, port: u16) -> Option<f64> {
     let addr = format!("{}:{}", host, port);
@@ -18,6 +166,73 @@ pub async fn tcping(host: &str, port: u16) -> Option<f64> {
         Ok(Ok(_stream)) => Some((start.elapsed().as_secs_f64() * 1000.0 * 10.0).round() / 10.0),
         _ => None,
     }
+}
+
+static RTT_HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
+
+fn rtt_http_client() -> Option<&'static Client> {
+    if RTT_HTTP_CLIENT.get().is_none() {
+        if let Ok(c) = Client::builder()
+            .danger_accept_invalid_certs(true)
+            .no_proxy()
+            .timeout(Duration::from_secs(3))
+            .connect_timeout(Duration::from_secs(3))
+            .pool_idle_timeout(Duration::from_secs(90))
+            .build()
+        {
+            let _ = RTT_HTTP_CLIENT.set(c);
+        }
+    }
+    RTT_HTTP_CLIENT.get()
+}
+
+/// Measures true end-to-end RTT to the VPS, bypassing Clash TUN's local TCP SYN-ACK hijack.
+pub async fn probe_real_rtt(
+    host: &str,
+    vless_port: u16,
+    ssh_port: u16,
+    panel_url: &str,
+) -> Option<f64> {
+    let tcp_rtt = tcping(host, vless_port).await;
+    if let Some(ms) = tcp_rtt {
+        if ms >= 15.0 {
+            return Some(ms);
+        }
+    }
+
+    let trimmed_panel = panel_url.trim().trim_end_matches('/');
+    if !trimmed_panel.is_empty() {
+        if let Some(client) = rtt_http_client() {
+            let url = format!("{}/", trimmed_panel);
+            let start = Instant::now();
+            if client.head(&url).send().await.is_ok() {
+                let elapsed = (start.elapsed().as_secs_f64() * 1000.0 * 10.0).round() / 10.0;
+                return Some(elapsed);
+            }
+        }
+    }
+
+    if ssh_port > 0 {
+        use tokio::io::AsyncReadExt;
+        let addr = format!("{}:{}", host, ssh_port);
+        let start = Instant::now();
+        if let Ok(Ok(mut stream)) =
+            tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(&addr)).await
+        {
+            let mut buf = [0u8; 32];
+            if let Ok(Ok(n)) =
+                tokio::time::timeout(Duration::from_secs(3), stream.read(&mut buf)).await
+            {
+                if n > 0 {
+                    let one_rtt =
+                        ((start.elapsed().as_secs_f64() * 1000.0 / 2.0) * 10.0).round() / 10.0;
+                    return Some(one_rtt);
+                }
+            }
+        }
+    }
+
+    tcp_rtt
 }
 
 #[cfg(unix)]
@@ -149,10 +364,24 @@ pub async fn probe_local_shield(vps_host: Option<&str>) -> LocalShieldStatus {
     }
 
     if shield.mihomo_connected {
+        ensure_traffic_stream();
         let (conns_res, rules_res) = tokio::join!(
             mihomo_get("/connections"),
             mihomo_get("/rules")
         );
+
+        let live_sample = LIVE_TRAFFIC
+            .lock()
+            .ok()
+            .and_then(|g| *g)
+            .filter(|s| s.updated_at.elapsed() <= Duration::from_secs(4));
+
+        if let Some(s) = live_sample {
+            shield.local_up_bps = s.up_bps;
+            shield.local_down_bps = s.down_bps;
+            shield.local_up_total = s.up_total;
+            shield.local_down_total = s.down_total;
+        }
 
         if let Ok((conns, _)) = conns_res {
             let up_total = conns
@@ -164,18 +393,27 @@ pub async fn probe_local_shield(vps_host: Option<&str>) -> LocalShieldStatus {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
 
-            let now = Instant::now();
-            if let Ok(mut guard) = PREV_TRAFFIC.lock() {
-                if let Some((prev_t, prev_up, prev_down)) = *guard {
-                    let dt = now.duration_since(prev_t).as_secs_f64();
-                    if dt >= 0.25 {
-                        shield.local_up_bps =
-                            (up_total.saturating_sub(prev_up) as f64 / dt) as u64;
-                        shield.local_down_bps =
-                            (down_total.saturating_sub(prev_down) as f64 / dt) as u64;
+            if shield.local_up_total == 0 {
+                shield.local_up_total = up_total;
+            }
+            if shield.local_down_total == 0 {
+                shield.local_down_total = down_total;
+            }
+
+            if live_sample.is_none() {
+                let now = Instant::now();
+                if let Ok(mut guard) = PREV_TRAFFIC.lock() {
+                    if let Some((prev_t, prev_up, prev_down)) = *guard {
+                        let dt = now.duration_since(prev_t).as_secs_f64();
+                        if dt >= 0.25 {
+                            shield.local_up_bps =
+                                (up_total.saturating_sub(prev_up) as f64 / dt) as u64;
+                            shield.local_down_bps =
+                                (down_total.saturating_sub(prev_down) as f64 / dt) as u64;
+                        }
                     }
+                    *guard = Some((now, up_total, down_total));
                 }
-                *guard = Some((now, up_total, down_total));
             }
 
             if let Some(arr) = conns.get("connections").and_then(|v| v.as_array()) {
@@ -205,7 +443,7 @@ pub async fn probe_local_shield(vps_host: Option<&str>) -> LocalShieldStatus {
                     let payload = r.get("payload").and_then(|v| v.as_str()).unwrap_or("");
                     let proxy = r.get("proxy").and_then(|v| v.as_str()).unwrap_or("");
                     proxy.eq_ignore_ascii_case("REJECT")
-                        && payload.contains("UDP")
+                        && payload.to_ascii_uppercase().contains("UDP")
                         && payload.contains("443")
                 });
                 shield.quic_blocked = Some(has_quic_reject);
