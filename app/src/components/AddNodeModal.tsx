@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Bot, Check, Copy, FileJson, KeyRound, Server, Sparkles, X } from "lucide-react";
 import type { HandoffPayload } from "../types/telemetry";
 import { buildAiDeployPrompt } from "../lib/diagnostic";
+import { AnimatedModal } from "./AnimatedModal";
 
 interface AddNodeModalProps {
   open: boolean;
@@ -41,14 +42,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
   useEffect(() => {
     if (!open) return;
     setError(null);
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
-
-  if (!open) return null;
+  }, [open]);
 
   const deployPrompt = buildAiDeployPrompt();
 
@@ -113,13 +107,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
   };
 
   return (
-    <div
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md"
-    >
-      <div className="glass-card relative w-full max-w-xl rounded-2xl border border-white/12 p-5 shadow-2xl">
+    <AnimatedModal open={open} onClose={onClose} panelClassName="max-w-xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-[16px] font-semibold text-zinc-100">接入 VPS 节点</h2>
           <button
@@ -160,7 +148,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
         </div>
 
         {tab === "ai" && (
-          <div className="space-y-3.5">
+          <div key="tab-ai" className="animate-modal-tab space-y-3.5">
             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-3.5">
               <div className="flex items-center gap-2 text-[12px] font-medium text-emerald-300">
                 <Bot className="h-4 w-4" />
@@ -191,7 +179,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
         )}
 
         {tab === "manual" && (
-          <form onSubmit={handleManualSubmit} className="space-y-3">
+          <form key="tab-manual" onSubmit={handleManualSubmit} className="animate-modal-tab space-y-3">
             <div className="grid grid-cols-3 gap-2.5">
               <label className="col-span-2 block">
                 <span className="mb-1 block text-[11px] text-zinc-400">VPS 公网 IPv4 *</span>
@@ -340,7 +328,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
         )}
 
         {tab === "json" && (
-          <div className="space-y-3">
+          <div key="tab-json" className="animate-modal-tab space-y-3">
             <textarea
               rows={8}
               value={rawJson}
@@ -370,7 +358,6 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </AnimatedModal>
   );
 };

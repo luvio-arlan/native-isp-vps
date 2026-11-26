@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Activity,
   Check,
@@ -12,7 +13,7 @@ import {
 import { useTelemetry } from "../hooks/useTelemetry";
 import { SparklineChart } from "../components/SparklineChart";
 import { StatusBadge } from "../components/StatusBadge";
-import { api } from "../lib/tauri";
+import { api, isTauriRuntime, subscribeEvent } from "../lib/tauri";
 import {
   daysUntilReset,
   formatBytes,
@@ -24,6 +25,71 @@ export const PopoverHud: React.FC = () => {
   const { activeNode, snapshot, isDemo, isProbing, runFullProbe } = useTelemetry();
   const [channel, setChannel] = useState<"local" | "vps">("local");
   const [copied, setCopied] = useState(false);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let raf1: number | null = null;
+    let raf2: number | null = null;
+
+    const scheduleEnter = () => {
+      if (raf1 !== null) window.cancelAnimationFrame(raf1);
+      if (raf2 !== null) window.cancelAnimationFrame(raf2);
+      raf1 = window.requestAnimationFrame(() => {
+        raf2 = window.requestAnimationFrame(() => {
+          if (active) setVisible(true);
+        });
+      });
+    };
+
+    if (!isTauriRuntime()) {
+      scheduleEnter();
+      return () => {
+        active = false;
+        if (raf1 !== null) window.cancelAnimationFrame(raf1);
+        if (raf2 !== null) window.cancelAnimationFrame(raf2);
+      };
+    }
+
+    let unlisten: (() => void) | null = null;
+
+    subscribeEvent<boolean>("cockpit://popover-visibility", (open) => {
+      if (!active) return;
+      if (open) {
+        scheduleEnter();
+      } else {
+        if (raf1 !== null) window.cancelAnimationFrame(raf1);
+        if (raf2 !== null) window.cancelAnimationFrame(raf2);
+        setVisible(false);
+      }
+    }).then((fn) => {
+      if (active) unlisten = fn;
+      else fn();
+    });
+
+    getCurrentWindow()
+      .isVisible()
+      .then((shown) => {
+        if (active && shown) scheduleEnter();
+      })
+      .catch(() => {});
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setVisible(false);
+        api.hidePopover().catch(() => {});
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      active = false;
+      if (raf1 !== null) window.cancelAnimationFrame(raf1);
+      if (raf2 !== null) window.cancelAnimationFrame(raf2);
+      window.removeEventListener("keydown", onKeyDown);
+      unlisten?.();
+    };
+  }, []);
 
   const useLocal = channel === "local" && Boolean(snapshot?.localShield.mihomoConnected);
   const downBps = useLocal
@@ -74,7 +140,10 @@ export const PopoverHud: React.FC = () => {
 
   return (
     <div className="h-screen w-screen bg-transparent px-5 pt-2 pb-7">
-      <div className="popover-shell flex h-full w-full flex-col justify-between rounded-2xl p-3.5 text-zinc-100">
+      <div
+        data-state={visible ? "open" : "closed"}
+        className="popover-shell popover-motion flex h-full w-full flex-col justify-between rounded-2xl p-3.5 text-zinc-100"
+      >
         {/* Top Node Header */}
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">

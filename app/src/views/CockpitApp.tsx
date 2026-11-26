@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Activity,
@@ -18,6 +18,7 @@ import { useUpdater } from "../hooks/useUpdater";
 import { StatusBadge } from "../components/StatusBadge";
 import { AddNodeModal } from "../components/AddNodeModal";
 import { QrModal } from "../components/QrModal";
+import { ConfirmModal, useAnimatedPresence } from "../components/AnimatedModal";
 import { UpdateBanner } from "../components/UpdateBanner";
 import { OverviewTab } from "./OverviewTab";
 import { NetworkTab } from "./NetworkTab";
@@ -46,6 +47,10 @@ export const CockpitApp: React.FC = () => {
   const [nav, setNav] = useState<NavKey>(initialTab);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [qrState, setQrState] = useState<{ title: string; url: string } | null>(null);
+  const [pendingDeleteNode, setPendingDeleteNode] = useState<{ id: string; name: string } | null>(
+    null
+  );
+  const [cachedToast, setCachedToast] = useState<string>("");
 
   const handleDragMouseDown = useCallback((e: React.MouseEvent<HTMLElement>) => {
     if (e.button !== 0 || e.detail >= 2 || !isTauriRuntime()) return;
@@ -87,6 +92,11 @@ export const CockpitApp: React.FC = () => {
   } = useTelemetry();
 
   const updater = useUpdater(settings?.autoCheckUpdates ?? true);
+  const toastPresence = useAnimatedPresence(Boolean(toast), 180);
+
+  useEffect(() => {
+    if (toast) setCachedToast(toast);
+  }, [toast]);
 
   return (
     <div className="cockpit-shell flex h-screen w-screen overflow-hidden">
@@ -174,9 +184,7 @@ export const CockpitApp: React.FC = () => {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (window.confirm(`确定移除节点「${n.name}」并清理本地凭据？`)) {
-                          removeNode(n.id);
-                        }
+                        setPendingDeleteNode({ id: n.id, name: n.name });
                       }}
                       title="移除节点"
                       className="rounded-md p-1 text-zinc-600 opacity-0 transition hover:bg-rose-500/15 hover:text-rose-300 group-hover:opacity-100"
@@ -362,10 +370,31 @@ export const CockpitApp: React.FC = () => {
         onClose={() => setQrState(null)}
       />
 
+      <ConfirmModal
+        open={Boolean(pendingDeleteNode)}
+        title="移除节点"
+        message={
+          pendingDeleteNode
+            ? `确定移除节点「${pendingDeleteNode.name}」并清理本地凭据？`
+            : ""
+        }
+        confirmLabel="移除节点"
+        danger
+        onConfirm={() => {
+          if (pendingDeleteNode) {
+            removeNode(pendingDeleteNode.id);
+          }
+        }}
+        onClose={() => setPendingDeleteNode(null)}
+      />
+
       {/* Toast Notification */}
-      {toast && (
-        <div className="fixed bottom-5 right-5 z-50 rounded-xl border border-emerald-500/30 bg-[#0d121a]/95 px-4 py-2.5 text-[12px] font-medium text-emerald-200 shadow-2xl backdrop-blur-md">
-          {toast}
+      {toastPresence.mounted && (
+        <div
+          data-state={toastPresence.phase === "entered" ? "open" : "closed"}
+          className="toast-motion fixed bottom-5 right-5 z-50 rounded-xl border border-emerald-500/30 bg-[#0d121a]/95 px-4 py-2.5 text-[12px] font-medium text-emerald-200 shadow-2xl backdrop-blur-md"
+        >
+          {toast ?? cachedToast}
         </div>
       )}
     </div>

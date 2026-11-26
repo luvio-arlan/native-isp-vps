@@ -1,13 +1,18 @@
 use crate::models::{AppSettings, TelemetrySnapshot};
 use crate::state::CockpitState;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{App, AppHandle, Manager, PhysicalPosition, WindowEvent};
+use tauri::{App, AppHandle, Emitter, EventTarget, Manager, PhysicalPosition, WindowEvent};
+
+const POPOVER_EXIT_DURATION_MS: u64 = 155;
 
 static LAST_POPOVER_BLUR: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static LAST_TRAY_TITLE: OnceLock<Mutex<String>> = OnceLock::new();
+static POPOVER_OPEN: AtomicBool = AtomicBool::new(false);
+static POPOVER_SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn last_blur_slot() -> &'static Mutex<Option<Instant>> {
     LAST_POPOVER_BLUR.get_or_init(|| Mutex::new(None))
@@ -77,14 +82,37 @@ pub fn update_tray_title(app: &AppHandle, snapshot: &TelemetrySnapshot, settings
     update_tray_title_values(app, down, snapshot.rtt_ms, settings);
 }
 
+pub fn hide_popover_animated(app: &AppHandle) {
+    let was_open = POPOVER_OPEN.swap(false, Ordering::SeqCst);
+    let seq = POPOVER_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+
+    if let Some(pop) = app.get_webview_window("popover") {
+        let _ = app.emit_to(
+            EventTarget::webview_window("popover"),
+            "cockpit://popover-visibility",
+            false,
+        );
+        if !was_open && !pop.is_visible().unwrap_or(false) {
+            return;
+        }
+        let app_clone = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(POPOVER_EXIT_DURATION_MS)).await;
+            if POPOVER_SEQ.load(Ordering::SeqCst) == seq {
+                if let Some(p) = app_clone.get_webview_window("popover") {
+                    let _ = p.hide();
+                }
+            }
+        });
+    }
+}
+
 pub fn show_main_window_internal(app: &AppHandle, state: &Arc<CockpitState>) {
     #[cfg(target_os = "macos")]
     {
         let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
     }
-    if let Some(pop) = app.get_webview_window("popover") {
-        let _ = pop.hide();
-    }
+    hide_popover_animated(app);
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
         let _ = win.unminimize();
@@ -116,8 +144,8 @@ pub fn toggle_popover_at(
     state: &Arc<CockpitState>,
 ) {
     if let Some(pop) = app.get_webview_window("popover") {
-        if pop.is_visible().unwrap_or(false) {
-            let _ = pop.hide();
+        if POPOVER_OPEN.load(Ordering::SeqCst) {
+            hide_popover_animated(app);
             return;
         }
         if was_just_blurred() {
@@ -155,9 +183,16 @@ pub fn toggle_popover_at(
         }
 
         let y = (tray_y + tray_h) as i32;
+        POPOVER_SEQ.fetch_add(1, Ordering::SeqCst);
+        POPOVER_OPEN.store(true, Ordering::SeqCst);
         let _ = pop.set_position(PhysicalPosition::new(x as i32, y));
         let _ = pop.show();
         let _ = pop.set_focus();
+        let _ = app.emit_to(
+            EventTarget::webview_window("popover"),
+            "cockpit://popover-visibility",
+            true,
+        );
 
         let app_clone = app.clone();
         let state_clone = Arc::clone(state);
@@ -237,11 +272,11 @@ pub fn setup_tray_and_windows(app: &App, state: Arc<CockpitState>) -> tauri::Res
 
     if let Some(pop_win) = app.get_webview_window("popover") {
         let _ = pop_win.set_shadow(false);
-        let pop_clone = pop_win.clone();
+        let handle = app.handle().clone();
         pop_win.on_window_event(move |event| {
             if let WindowEvent::Focused(false) = event {
                 record_popover_blur();
-                let _ = pop_clone.hide();
+                hide_popover_animated(&handle);
             }
         });
     }

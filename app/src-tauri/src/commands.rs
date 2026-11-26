@@ -12,7 +12,7 @@ use crate::tray;
 use crate::updater;
 use crate::xui;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 
 #[tauri::command]
 pub async fn list_nodes(state: State<'_, Arc<CockpitState>>) -> Result<Vec<NodeConfig>, String> {
@@ -279,7 +279,5 @@ pub fn collapse_to_tray(app: AppHandle) {
 
 #[tauri::command]
 pub fn hide_popover(app: AppHandle) {
-    if let Some(pop) = app.get_webview_window("popover") {
-        let _ = pop.hide();
-    }
+    tray::hide_popover_animated(&app);
 }
