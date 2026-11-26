@@ -13,19 +13,43 @@ export const QrModal: React.FC<QrModalProps> = ({ title, url, onClose }) => {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (!url) return;
+    if (!url) {
+      setDataUrl("");
+      return;
+    }
+    let active = true;
+    setDataUrl("");
     QRCode.toDataURL(url, {
       width: 220,
       margin: 2,
       color: { dark: "#0b0d14", light: "#ffffff" },
-    }).then(setDataUrl);
-  }, [url]);
+    })
+      .then((out) => {
+        if (active) setDataUrl(out);
+      })
+      .catch(() => {});
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      active = false;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [url, onClose]);
 
   if (!url) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
-      <div className="glass-card w-full max-w-xs rounded-2xl border border-white/12 p-5 text-center shadow-2xl">
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="glass-card w-full max-w-xs rounded-2xl border border-white/12 p-5 text-center shadow-2xl"
+      >
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-zinc-100">
             <Smartphone className="h-4 w-4 text-emerald-400" />
@@ -42,9 +66,13 @@ export const QrModal: React.FC<QrModalProps> = ({ title, url, onClose }) => {
 
         <button
           onClick={async () => {
-            await navigator.clipboard.writeText(url);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1800);
+            try {
+              await navigator.clipboard.writeText(url);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1800);
+            } catch {
+              // Ignore clipboard permission errors
+            }
           }}
           className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 py-2 text-[12px] font-medium text-zinc-100 transition hover:bg-white/12"
         >

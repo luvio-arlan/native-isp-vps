@@ -35,7 +35,7 @@
                                 ▼ Stage 5.5（Zero-Touch 自动交接）
          一键安装/拉起本地看板 + 写入 0600 临时交接清单 + 配置专用 SSH 体检公钥
                                 │
-                                ▼（1 秒内加密写入系统 Keychain 并覆零粉碎临时文件）
+                                ▼（1 秒内原子写入本地 0600 凭据库并覆零粉碎临时文件）
       Native ISP Cockpit 实时掌控网速 / 延迟 / 配额 / AI 连通 / 防泄露
                                 │
                                 ▼ 检测到参数漂移或异常时
@@ -82,7 +82,7 @@
 
 ### 本地领航看板（`app/` · Tauri v2 + Rust + React 19）
 - **零额外 VPS 守护进程**：不向 1GB VPS 注入任何额外探针进程或新端口——复用 **3x-ui 原生 API**（Bearer Token 优先 + Cookie 登录兜底）与 **本机 Mihomo Unix Socket**，后台收起自动降频（`2s → 15s`）极度省资源。
-- **系统钥匙串安全边界**：API Token 与面板密码仅加密写入 **macOS Keychain / Windows Credential Manager**，交接临时文件在 1 秒内覆零粉碎，绝不明文落盘、绝不进 Git。
+- **本地 0600 安全边界**：API Token 与面板密码仅以 `0600` 权限原子写入 `~/.config/native-isp-vps/secrets.json` 并走进程内内存缓存（零 Keychain 授权弹窗、绝不进 Git），交接临时文件在 1 秒内覆零粉碎。
 - **多用户配额与手机扫码**：可视化展示 `Me` / `GF` 等成员配额与 30 天周期消耗预测，一键复制万能订阅或即时生成二维码供 iPhone Shadowrocket / Android FlClash 扫码导入。
 - **GitHub Releases 自动热更新**：内置 `tauri-plugin-updater` 与自动化工作流（[.github/workflows/release-app.yml](./.github/workflows/release-app.yml)），推送新版本 Tag 后自动构建 macOS（Apple Silicon / Intel）与 Windows 签名包，客户端应用内一键静默更新重启。
 
@@ -144,7 +144,7 @@ native-isp-vps/
 │   └── clash-verge-merge.yaml        # Clash Verge Rev 订阅 Merge 配置（并发建连 + 15s 保活 + 嗅探）
 ├── app/                              # Native ISP Cockpit 本地领航看板（Tauri v2 + Rust + React）
 │   ├── src/                          # Brushed Titanium & Obsidian 双皮肤前端 + 状态栏 HUD
-│   ├── src-tauri/                    # Rust 遥测引擎、Keychain 密钥链、收件箱监听与自动更新
+│   ├── src-tauri/                    # Rust 遥测引擎、0600 凭据库、收件箱监听与自动更新
 │   └── RELEASE.md                    # GitHub Releases 签名与客户端自动热更新配置说明
 └── .github/workflows/
     └── release-app.yml               # GitHub Tag 自动构建 macOS/Windows 并发布 updater latest.json

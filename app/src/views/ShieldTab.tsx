@@ -62,7 +62,7 @@ export const ShieldTab: React.FC<ShieldTabProps> = ({ shield }) => {
             className={`rounded-full border px-3 py-1 ${
               shield?.mihomoConnected
                 ? "border-emerald-500/30 bg-emerald-500/12 text-emerald-300"
-                : "border-zinc-700 bg-zinc-800/70 text-zinc-400"
+                : "border-white/10 bg-white/5 text-zinc-400"
             }`}
           >
             {shield?.mihomoConnected

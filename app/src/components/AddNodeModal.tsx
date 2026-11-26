@@ -365,7 +365,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
                 disabled={submitting || !rawJson.trim()}
                 className="rounded-lg bg-emerald-500 px-4 py-2 text-[12px] font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
               >
-                导入并写入钥匙串
+                导入并保存凭据
               </button>
             </div>
           </div>

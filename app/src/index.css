@@ -3,6 +3,7 @@
 @layer base {
   :root,
   [data-theme="obsidian"] {
+    color-scheme: dark;
     --chart-grid: rgba(255, 255, 255, 0.055);
     --chart-cursor: rgba(255, 255, 255, 0.22);
     --chart-dot-fill: #0b0d14;
@@ -12,6 +13,7 @@
   }
 
   [data-theme="titanium"] {
+    color-scheme: light;
     --chart-grid: rgba(24, 28, 36, 0.08);
     --chart-cursor: rgba(24, 28, 36, 0.28);
     --chart-dot-fill: #f7f7f4;
@@ -187,13 +189,15 @@
   color: #059669 !important;
 }
 [data-theme="titanium"] .text-sky-200,
-[data-theme="titanium"] .text-sky-300 {
+[data-theme="titanium"] .text-sky-300,
+[data-theme="titanium"] .text-sky-300\/75 {
   color: #0369a1 !important;
 }
 [data-theme="titanium"] .text-sky-400 {
   color: #0284c7 !important;
 }
 [data-theme="titanium"] .text-amber-200,
+[data-theme="titanium"] .text-amber-200\/80,
 [data-theme="titanium"] .text-amber-300 {
   color: #b45309 !important;
 }

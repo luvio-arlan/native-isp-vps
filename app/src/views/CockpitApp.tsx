@@ -98,7 +98,7 @@ export const CockpitApp: React.FC = () => {
           className="titlebar-drag flex h-12 items-center justify-end px-4 pt-2"
         >
           <span className="pointer-events-none rounded-md border border-white/8 bg-white/[0.04] px-2 py-0.5 font-mono-num text-[10px] tracking-wider text-zinc-400">
-            v{updater.releaseInfo?.currentVersion ?? "0.1.0"}
+            v{updater.releaseInfo?.currentVersion ?? "0.1.1"}
           </span>
         </div>
 
@@ -136,7 +136,7 @@ export const CockpitApp: React.FC = () => {
             </button>
           </div>
 
-          <div className="space-y-1">
+          <div className="max-h-56 space-y-1 overflow-y-auto pr-0.5">
             {nodes.length === 0 ? (
               <div className="rounded-xl border border-sky-500/25 bg-sky-500/[0.08] px-3 py-2.5">
                 <div className="flex items-center gap-1.5 text-[12px] font-medium text-sky-200">
@@ -172,7 +172,9 @@ export const CockpitApp: React.FC = () => {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        removeNode(n.id);
+                        if (window.confirm(`确定移除节点「${n.name}」并清理本地凭据？`)) {
+                          removeNode(n.id);
+                        }
                       }}
                       title="移除节点"
                       className="rounded-md p-1 text-zinc-600 opacity-0 transition hover:bg-rose-500/15 hover:text-rose-300 group-hover:opacity-100"

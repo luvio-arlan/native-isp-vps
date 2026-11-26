@@ -16,7 +16,7 @@ fn shred_file(path: &Path) {
 }
 
 /// Scans `~/.local/share/native-isp-vps/inbox/` for JSON handoff payloads written by AI Agent Skill.
-/// Imports each node, seals secrets into OS Keychain, and immediately shreds the handoff file.
+/// Imports each node, saves secrets into local 0600 storage, and immediately shreds the handoff file.
 pub fn drain_inbox() -> Vec<NodeConfig> {
     let _ = storage::ensure_dirs();
     let dir = storage::inbox_dir();

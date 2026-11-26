@@ -200,7 +200,7 @@ description: >-
        EOF
        open "/Applications/Native ISP Cockpit.app"
        ```
-     - 看板会在 1 秒内捕获该文件、将 `apiToken`/`panelPassword` 加密封印至 **macOS Keychain / 系统钥匙串** 并**覆零粉碎临时文件**，随后立即点亮状态栏实时网速、延迟与月度配额监控（原色钛合金 / 曜石黑双皮肤可一键切换）。
+     - 看板会在 1 秒内捕获该文件、将 `apiToken`/`panelPassword` 以 `0600` 权限原子保存至本地 `~/.config/native-isp-vps/secrets.json` 并**覆零粉碎临时文件**，随后立即点亮状态栏实时网速、延迟与月度配额监控（原色钛合金 / 曜石黑双皮肤可一键切换）。
    - **④ 反向自愈闭环**：当用户从看板「内核深度体检」页复制「脱敏 AI 修复诊断包」发来时，直接按其中标出的漂移项（如 `qdisc != fq`、`ipv6Leak=true`、`Swap 未配置`）执行 Stage 1 / Stage 3 / Stage 5 定点修复并复验。
 4. **3 步断流/超时速查**：
    1. 查客户端：确认 `tun.stack` 为 `mixed`、存在 `AND,((NETWORK,UDP),(DST-PORT,443)),REJECT` 规则、`Merge` 的 `tcp-concurrent` 与 `keep-alive-idle: 15` 已生效；

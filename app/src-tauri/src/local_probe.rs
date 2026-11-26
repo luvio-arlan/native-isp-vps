@@ -160,9 +160,8 @@ fn ensure_traffic_stream() {
 }
 
 pub async fn tcping(host: &str, port: u16) -> Option<f64> {
-    let addr = format!("{}:{}", host, port);
     let start = Instant::now();
-    match tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(&addr)).await {
+    match tokio::time::timeout(Duration::from_secs(3), TcpStream::connect((host, port))).await {
         Ok(Ok(_stream)) => Some((start.elapsed().as_secs_f64() * 1000.0 * 10.0).round() / 10.0),
         _ => None,
     }
@@ -214,10 +213,9 @@ pub async fn probe_real_rtt(
 
     if ssh_port > 0 {
         use tokio::io::AsyncReadExt;
-        let addr = format!("{}:{}", host, ssh_port);
         let start = Instant::now();
         if let Ok(Ok(mut stream)) =
-            tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(&addr)).await
+            tokio::time::timeout(Duration::from_secs(3), TcpStream::connect((host, ssh_port))).await
         {
             let mut buf = [0u8; 32];
             if let Ok(Ok(n)) =
@@ -304,12 +302,25 @@ async fn unix_http_get_json(sock_path: &PathBuf, endpoint: &str) -> Result<Value
     serde_json::from_str(json_slice).map_err(|e| format!("mihomo json parse err: {e}"))
 }
 
-async fn http_mihomo_get_json(endpoint: &str) -> Result<Value, String> {
+static MIHOMO_HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
+
+fn mihomo_http_client() -> Result<&'static Client, String> {
+    if let Some(c) = MIHOMO_HTTP_CLIENT.get() {
+        return Ok(c);
+    }
     let client = Client::builder()
         .timeout(Duration::from_secs(2))
         .no_proxy()
         .build()
         .map_err(|e| e.to_string())?;
+    let _ = MIHOMO_HTTP_CLIENT.set(client);
+    MIHOMO_HTTP_CLIENT
+        .get()
+        .ok_or_else(|| "mihomo http client unavailable".to_string())
+}
+
+async fn http_mihomo_get_json(endpoint: &str) -> Result<Value, String> {
+    let client = mihomo_http_client()?;
     let url = format!("http://127.0.0.1:9097{}", endpoint);
     let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
     resp.json::<Value>().await.map_err(|e| e.to_string())
@@ -451,18 +462,14 @@ pub async fn probe_local_shield(vps_host: Option<&str>) -> LocalShieldStatus {
         }
     }
 
-    if let Some(host) = vps_host {
-        if let Some(exit) = shield.exit_ipv4.as_deref() {
-            shield.matches_vps_ip = Some(exit == host);
-        }
-    }
-
+    let _ = vps_host;
     shield
 }
 
 pub async fn run_leak_check(vps_host: Option<&str>) -> LeakCheckResult {
     let client_v4 = Client::builder()
         .timeout(Duration::from_secs(4))
+        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
         .build()
         .ok();
     let client_v6 = Client::builder()
@@ -470,32 +477,37 @@ pub async fn run_leak_check(vps_host: Option<&str>) -> LeakCheckResult {
         .build()
         .ok();
 
-    let exit_ipv4 = if let Some(c) = client_v4 {
-        match c.get("https://api.ipify.org").send().await {
-            Ok(resp) if resp.status().is_success() => resp
-                .text()
-                .await
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty()),
-            _ => None,
+    let (exit_ipv4, ipv6_leak) = tokio::join!(
+        async {
+            if let Some(c) = client_v4 {
+                match c.get("https://api.ipify.org").send().await {
+                    Ok(resp) if resp.status().is_success() => resp
+                        .text()
+                        .await
+                        .ok()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty()),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        },
+        async {
+            if let Some(c) = client_v6 {
+                match c.get("https://api6.ipify.org").send().await {
+                    Ok(resp) if resp.status().is_success() => resp
+                        .text()
+                        .await
+                        .ok()
+                        .is_some_and(|s| s.contains(':')),
+                    _ => false,
+                }
+            } else {
+                false
+            }
         }
-    } else {
-        None
-    };
-
-    let ipv6_leak = if let Some(c) = client_v6 {
-        match c.get("https://api6.ipify.org").send().await {
-            Ok(resp) if resp.status().is_success() => resp
-                .text()
-                .await
-                .ok()
-                .is_some_and(|s| s.contains(':')),
-            _ => false,
-        }
-    } else {
-        false
-    };
+    );
 
     let matches_vps_ip = match (exit_ipv4.as_deref(), vps_host) {
         (Some(exit), Some(host)) => exit == host,

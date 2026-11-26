@@ -63,17 +63,38 @@ pub fn load_nodes() -> Vec<NodeConfig> {
     }
 }
 
+fn write_atomic_file(path: &std::path::Path, content: &[u8], restricted_0600: bool) -> Result<(), String> {
+    let tmp_path = path.with_extension("tmp");
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mode = if restricted_0600 { 0o600 } else { 0o644 };
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(mode)
+            .open(&tmp_path)
+            .map_err(|e| format!("open temp file failed: {e}"))?;
+        file.write_all(content)
+            .map_err(|e| format!("write temp file failed: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("sync temp file failed: {e}"))?;
+        let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(mode));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = restricted_0600;
+        fs::write(&tmp_path, content).map_err(|e| format!("write temp file failed: {e}"))?;
+    }
+    fs::rename(&tmp_path, path).map_err(|e| format!("atomic rename failed: {e}"))
+}
+
 pub fn save_nodes(nodes: &[NodeConfig]) -> Result<(), String> {
     ensure_dirs()?;
     let json = serde_json::to_string_pretty(nodes).map_err(|e| e.to_string())?;
-    let path = nodes_file();
-    fs::write(&path, json).map_err(|e| format!("write nodes.json failed: {e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    }
-    Ok(())
+    write_atomic_file(&nodes_file(), json.as_bytes(), true)
 }
 
 pub fn load_settings() -> AppSettings {
@@ -93,7 +114,7 @@ pub fn load_settings() -> AppSettings {
 pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     ensure_dirs()?;
     let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    fs::write(settings_file(), json).map_err(|e| format!("write settings.json failed: {e}"))
+    write_atomic_file(&settings_file(), json.as_bytes(), false)
 }
 
 fn load_secrets_map_from_disk() -> HashMap<String, NodeSecrets> {
@@ -110,27 +131,7 @@ fn load_secrets_map_from_disk() -> HashMap<String, NodeSecrets> {
 fn write_secrets_map_to_disk(map: &HashMap<String, NodeSecrets>) -> Result<(), String> {
     ensure_dirs()?;
     let json = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
-    let path = secrets_file();
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|e| format!("open secrets.json failed: {e}"))?;
-        file.write_all(json.as_bytes())
-            .map_err(|e| format!("write secrets.json failed: {e}"))?;
-        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    }
-    #[cfg(not(unix))]
-    {
-        fs::write(&path, json).map_err(|e| format!("write secrets.json failed: {e}"))?;
-    }
-    Ok(())
+    write_atomic_file(&secrets_file(), json.as_bytes(), true)
 }
 
 fn secrets_cache() -> &'static Mutex<HashMap<String, NodeSecrets>> {
@@ -230,7 +231,7 @@ pub fn upsert_from_handoff(payload: HandoffPayload) -> Result<NodeConfig, String
     {
         secrets.panel_password = payload.panel_password;
     }
-    let _ = save_secrets(&id, &secrets);
+    save_secrets(&id, &secrets)?;
 
     if let Some(pos) = nodes.iter().position(|n| n.id == id) {
         nodes[pos] = node.clone();

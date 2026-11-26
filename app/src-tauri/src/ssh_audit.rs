@@ -18,6 +18,7 @@ echo "F2B_TOT=$(fail2ban-client status sshd 2>/dev/null | awk -F: '/Total banned
 
 pub async fn run_ssh_audit(node: &NodeConfig) -> AuditReport {
     let mut cmd = Command::new("ssh");
+    cmd.kill_on_drop(true);
     cmd.arg("-o")
         .arg("BatchMode=yes")
         .arg("-o")

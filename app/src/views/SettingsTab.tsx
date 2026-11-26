@@ -50,7 +50,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             </div>
             <div className="mt-2.5 flex flex-wrap items-center gap-2.5 font-mono-num text-[11.5px]">
               <span className="rounded-lg border border-white/10 bg-black/35 px-2.5 py-1 text-zinc-200">
-                当前 v{releaseInfo?.currentVersion ?? "0.1.0"}
+                当前 v{releaseInfo?.currentVersion ?? "0.1.1"}
               </span>
               {releaseInfo?.latestVersion && (
                 <span className="rounded-lg border border-white/10 bg-black/35 px-2.5 py-1 text-zinc-300">

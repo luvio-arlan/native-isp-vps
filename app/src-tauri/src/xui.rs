@@ -10,11 +10,20 @@ static XUI_CLIENTS: OnceLock<Mutex<HashMap<String, Client>>> = OnceLock::new();
 fn build_client() -> Result<Client, String> {
     Client::builder()
         .cookie_store(true)
+        .no_proxy()
         .danger_accept_invalid_certs(true)
         .timeout(Duration::from_secs(6))
         .connect_timeout(Duration::from_secs(4))
         .build()
         .map_err(|e| format!("http client error: {e}"))
+}
+
+pub fn evict_client(node_id: &str) {
+    if let Some(map) = XUI_CLIENTS.get() {
+        let mut guard = map.lock().unwrap_or_else(|p| p.into_inner());
+        let prefix = format!("{}::", node_id);
+        guard.retain(|k, _| !k.starts_with(&prefix));
+    }
 }
 
 fn get_or_create_client(cache_key: &str) -> Result<Client, String> {
@@ -231,9 +240,14 @@ pub async fn fetch_xui_telemetry(
         }
     }
 
-    // Fetch online client emails
+    // Fetch online client emails and inbound quotas concurrently
+    let (online_res, inbounds_res) = tokio::join!(
+        fetch_authed_json(&client, &onlines_url, true, active_token),
+        fetch_authed_json(&client, &inbounds_url, false, active_token)
+    );
+
     let mut online_set: HashSet<String> = HashSet::new();
-    if let Ok(online_val) = fetch_authed_json(&client, &onlines_url, true, active_token).await {
+    if let Ok(online_val) = online_res {
         if let Some(arr) = online_val.get("obj").and_then(|v| v.as_array()) {
             for email in arr {
                 if let Some(s) = email.as_str() {
@@ -248,9 +262,9 @@ pub async fn fetch_xui_telemetry(
         url.rsplit_once('/').map(|(prefix, _)| prefix.to_string())
     });
 
-    // Fetch inbounds & per-client quotas
+    // Parse inbounds & per-client quotas
     let mut clients: Vec<ClientQuota> = Vec::new();
-    if let Ok(inbounds_val) = fetch_authed_json(&client, &inbounds_url, false, active_token).await {
+    if let Ok(inbounds_val) = inbounds_res {
         if let Some(arr) = inbounds_val.get("obj").and_then(|v| v.as_array()) {
             for inbound in arr {
                 // Map email -> (subId, resetDay) from inbound.settings JSON string

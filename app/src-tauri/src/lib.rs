@@ -3,6 +3,7 @@ mod local_probe;
 mod models;
 mod ssh_audit;
 mod storage;
+mod tray;
 mod updater;
 mod xui;
 
@@ -13,11 +14,9 @@ use models::{
 };
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex as AsyncMutex, Notify, RwLock};
 
 const MAX_HISTORY: usize = 60;
 
@@ -29,6 +28,8 @@ struct CockpitState {
     latest_snapshot: RwLock<Option<TelemetrySnapshot>>,
     latest_leak: RwLock<Option<LeakCheckResult>>,
     demo_tick: RwLock<u64>,
+    poll_lock: AsyncMutex<()>,
+    poll_wake: Arc<Notify>,
 }
 
 impl CockpitState {
@@ -49,20 +50,10 @@ impl CockpitState {
             latest_snapshot: RwLock::new(None),
             latest_leak: RwLock::new(None),
             demo_tick: RwLock::new(0),
+            poll_lock: AsyncMutex::new(()),
+            poll_wake: Arc::new(Notify::new()),
         }
     }
-}
-
-fn format_compact_bps(bps: u64) -> String {
-    let mb = bps as f64 / (1024.0 * 1024.0);
-    if mb >= 1.0 {
-        return format!("{:.1}M", mb);
-    }
-    let kb = bps as f64 / 1024.0;
-    if kb >= 1.0 {
-        return format!("{:.0}K", kb);
-    }
-    format!("{}B", bps)
 }
 
 fn compute_health_score(
@@ -290,7 +281,16 @@ async fn build_demo_snapshot(
     }
 }
 
-async fn poll_once(app: &AppHandle, state: &CockpitState) {
+async fn poll_once(app: &AppHandle, state: &CockpitState, skip_if_busy: bool) {
+    let _poll_guard = if skip_if_busy {
+        match state.poll_lock.try_lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        }
+    } else {
+        state.poll_lock.lock().await
+    };
+
     // 1. Drain AI handoff inbox
     let imported = inbox::drain_inbox();
     if !imported.is_empty() {
@@ -305,12 +305,15 @@ async fn poll_once(app: &AppHandle, state: &CockpitState) {
                 let mut active = state.active_node_id.write().await;
                 *active = Some(node.id.clone());
             }
-            {
+            let updated_cfg = {
                 let mut cfg = state.settings.write().await;
                 cfg.demo_mode = false;
                 let _ = storage::save_settings(&cfg);
-            }
+                cfg.clone()
+            };
             let _ = app.emit("cockpit://nodes-updated", &fresh_nodes);
+            let _ = app.emit("cockpit://active-node-updated", Some(node.id.clone()));
+            let _ = app.emit("cockpit://settings-updated", &updated_cfg);
             let _ = app.emit("cockpit://node-imported", node);
             let _ = app
                 .notification()
@@ -342,11 +345,15 @@ async fn poll_once(app: &AppHandle, state: &CockpitState) {
             local_probe::probe_local_shield(Some(&node.host))
         );
 
-        // Attach cached leak check if available
+        // Attach cached leak check if available, recomputing matches_vps_ip for the active node
         if let Some(leak) = state.latest_leak.read().await.clone() {
+            let matches_current = leak
+                .exit_ipv4
+                .as_deref()
+                .is_some_and(|exit| exit == node.host);
             shield.exit_ipv4 = leak.exit_ipv4;
             shield.ipv6_leak = Some(leak.ipv6_leak);
-            shield.matches_vps_ip = Some(leak.matches_vps_ip);
+            shield.matches_vps_ip = Some(matches_current);
         }
 
         let now_ms = Utc::now().timestamp_millis();
@@ -390,82 +397,13 @@ async fn poll_once(app: &AppHandle, state: &CockpitState) {
         return;
     };
 
-    // Update menu bar title cleanly
-    if let Some(tray) = app.tray_by_id("main-tray") {
-        let down = if snapshot.local_shield.mihomo_connected {
-            snapshot.local_shield.local_down_bps
-        } else {
-            snapshot.xui.net_down_bps
-        };
-        let rtt_str = snapshot
-            .rtt_ms
-            .map(|r| format!("{:.0}ms", r))
-            .unwrap_or_else(|| "OFF".to_string());
-        let title = match settings.tray_display.as_str() {
-            "dot-only" => String::new(),
-            "rtt-only" => format!(" {}", rtt_str),
-            _ => format!(" ↓{} · {}", format_compact_bps(down), rtt_str),
-        };
-        let _ = tray.set_title(Some(&title));
-    }
+    tray::update_tray_title(app, &snapshot, &settings);
 
     {
         let mut latest = state.latest_snapshot.write().await;
         *latest = Some(snapshot.clone());
     }
     let _ = app.emit("cockpit://telemetry", &snapshot);
-}
-
-fn show_main_window_internal(app: &AppHandle) {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-    }
-    if let Some(pop) = app.get_webview_window("popover") {
-        let _ = pop.hide();
-    }
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.show();
-        let _ = win.unminimize();
-        let _ = win.set_focus();
-    }
-}
-
-fn collapse_to_tray_internal(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.hide();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-    }
-}
-
-fn toggle_popover_at(app: &AppHandle, tray_x: f64, tray_y: f64, tray_w: f64, tray_h: f64) {
-    if let Some(pop) = app.get_webview_window("popover") {
-        if pop.is_visible().unwrap_or(false) {
-            let _ = pop.hide();
-            return;
-        }
-        let scale = pop.scale_factor().unwrap_or(2.0);
-        let pop_w = 420.0 * scale;
-        let mut x = tray_x + tray_w / 2.0 - pop_w / 2.0;
-        if let Ok(Some(monitor)) = pop.current_monitor() {
-            let m_pos = monitor.position();
-            let m_size = monitor.size();
-            let min_x = m_pos.x as f64;
-            let max_x = (m_pos.x + m_size.width as i32) as f64 - pop_w;
-            if max_x >= min_x {
-                x = x.clamp(min_x, max_x);
-            }
-        } else {
-            x = x.max(0.0);
-        }
-        let y = (tray_y + tray_h) as i32;
-        let _ = pop.set_position(PhysicalPosition::new(x as i32, y));
-        let _ = pop.show();
-        let _ = pop.set_focus();
-    }
 }
 
 // ========================== TAURI COMMANDS ==========================
@@ -488,16 +426,23 @@ async fn set_active_node(
 ) -> Result<(), String> {
     {
         let mut active = state.active_node_id.write().await;
-        *active = Some(node_id);
+        *active = Some(node_id.clone());
     }
-    {
+    let updated_cfg = {
         let mut cfg = state.settings.write().await;
         if cfg.demo_mode {
             cfg.demo_mode = false;
             let _ = storage::save_settings(&cfg);
+            Some(cfg.clone())
+        } else {
+            None
         }
+    };
+    let _ = app.emit("cockpit://active-node-updated", Some(node_id));
+    if let Some(cfg) = updated_cfg {
+        let _ = app.emit("cockpit://settings-updated", &cfg);
     }
-    poll_once(&app, &state).await;
+    poll_once(&app, &state, false).await;
     Ok(())
 }
 
@@ -517,13 +462,16 @@ async fn upsert_node(
         let mut active = state.active_node_id.write().await;
         *active = Some(node.id.clone());
     }
-    {
+    let updated_cfg = {
         let mut cfg = state.settings.write().await;
         cfg.demo_mode = false;
         let _ = storage::save_settings(&cfg);
-    }
+        cfg.clone()
+    };
     let _ = app.emit("cockpit://nodes-updated", &nodes);
-    poll_once(&app, &state).await;
+    let _ = app.emit("cockpit://active-node-updated", Some(node.id.clone()));
+    let _ = app.emit("cockpit://settings-updated", &updated_cfg);
+    poll_once(&app, &state, false).await;
     Ok(node)
 }
 
@@ -534,23 +482,32 @@ async fn delete_node(
     state: State<'_, Arc<CockpitState>>,
 ) -> Result<Vec<NodeConfig>, String> {
     let nodes = storage::remove_node(&node_id)?;
+    xui::evict_client(&node_id);
     {
         let mut guard = state.nodes.write().await;
         *guard = nodes.clone();
     }
-    {
+    let next_active = {
         let mut active = state.active_node_id.write().await;
         if active.as_deref() == Some(node_id.as_str()) {
             *active = nodes.first().map(|n| n.id.clone());
         }
-    }
-    if nodes.is_empty() {
+        active.clone()
+    };
+    let updated_cfg = if nodes.is_empty() {
         let mut cfg = state.settings.write().await;
         cfg.demo_mode = true;
         let _ = storage::save_settings(&cfg);
-    }
+        Some(cfg.clone())
+    } else {
+        None
+    };
     let _ = app.emit("cockpit://nodes-updated", &nodes);
-    poll_once(&app, &state).await;
+    let _ = app.emit("cockpit://active-node-updated", next_active);
+    if let Some(cfg) = updated_cfg {
+        let _ = app.emit("cockpit://settings-updated", &cfg);
+    }
+    poll_once(&app, &state, false).await;
     Ok(nodes)
 }
 
@@ -566,7 +523,7 @@ async fn trigger_refresh(
     app: AppHandle,
     state: State<'_, Arc<CockpitState>>,
 ) -> Result<Option<TelemetrySnapshot>, String> {
-    poll_once(&app, &state).await;
+    poll_once(&app, &state, false).await;
     Ok(state.latest_snapshot.read().await.clone())
 }
 
@@ -693,7 +650,10 @@ async fn run_ssh_audit_cmd(
         });
     }
 
-    Ok(ssh_audit::run_ssh_audit(&target.unwrap()).await)
+    let Some(node) = target else {
+        return Err("未找到目标节点".to_string());
+    };
+    Ok(ssh_audit::run_ssh_audit(&node).await)
 }
 
 #[tauri::command]
@@ -717,7 +677,8 @@ async fn update_settings(
         *guard = sanitized.clone();
     }
     let _ = app.emit("cockpit://settings-updated", &sanitized);
-    poll_once(&app, &state).await;
+    state.poll_wake.notify_one();
+    poll_once(&app, &state, false).await;
     Ok(sanitized)
 }
 
@@ -727,13 +688,14 @@ async fn check_github_release_cmd() -> Result<GitHubReleaseInfo, String> {
 }
 
 #[tauri::command]
-fn open_main_window(app: AppHandle) {
-    show_main_window_internal(&app);
+fn open_main_window(app: AppHandle, state: State<'_, Arc<CockpitState>>) {
+    tray::show_main_window_internal(&app);
+    state.poll_wake.notify_one();
 }
 
 #[tauri::command]
 fn collapse_to_tray(app: AppHandle) {
-    collapse_to_tray_internal(&app);
+    tray::collapse_to_tray_internal(&app);
 }
 
 #[tauri::command]
@@ -747,6 +709,7 @@ fn hide_popover(app: AppHandle) {
 pub fn run() {
     let shared_state = Arc::new(CockpitState::new());
     let bg_state = Arc::clone(&shared_state);
+    let tray_wake = Arc::clone(&shared_state.poll_wake);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -755,76 +718,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(shared_state)
         .setup(move |app| {
-            // Tray right-click menu
-            let open_item = MenuItem::with_id(app, "open", "展开完整驾驶舱", true, None::<&str>)?;
-            let collapse_item =
-                MenuItem::with_id(app, "collapse", "收缩到状态栏", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "退出 Native ISP Cockpit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open_item, &collapse_item, &quit_item])?;
-
-            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
-                .unwrap_or_else(|_| app.default_window_icon().unwrap().clone());
-
-            let _tray = TrayIconBuilder::with_id("main-tray")
-                .icon(tray_icon)
-                .icon_as_template(true)
-                .title(" ···")
-                .tooltip("Native ISP Cockpit")
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "open" => show_main_window_internal(app),
-                    "collapse" => collapse_to_tray_internal(app),
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        rect,
-                        ..
-                    } = event
-                    {
-                        let scale = tray
-                            .app_handle()
-                            .get_webview_window("popover")
-                            .and_then(|w| w.scale_factor().ok())
-                            .unwrap_or(2.0);
-                        let pos = rect.position.to_physical::<f64>(scale);
-                        let size = rect.size.to_physical::<f64>(scale);
-                        toggle_popover_at(tray.app_handle(), pos.x, pos.y, size.width, size.height);
-                    }
-                })
-                .build(app)?;
-
-            // Main window close -> collapse cleanly to menu bar instead of quitting
-            if let Some(main_win) = app.get_webview_window("main") {
-                let handle = app.handle().clone();
-                main_win.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        collapse_to_tray_internal(&handle);
-                    }
-                });
-            }
-
-            // Popover auto-hide when clicking outside + disable native rectangular window shadow
-            if let Some(pop_win) = app.get_webview_window("popover") {
-                let _ = pop_win.set_shadow(false);
-                let pop_clone = pop_win.clone();
-                pop_win.on_window_event(move |event| {
-                    if let WindowEvent::Focused(false) = event {
-                        let _ = pop_clone.hide();
-                    }
-                });
-            }
+            tray::setup_tray_and_windows(app, tray_wake)?;
 
             // Spawn adaptive background telemetry & inbox watcher loop
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // Immediate initial poll
-                poll_once(&app_handle, &bg_state).await;
+                poll_once(&app_handle, &bg_state, false).await;
                 loop {
                     let settings = bg_state.settings.read().await.clone();
                     let main_vis = app_handle
@@ -840,8 +739,11 @@ pub fn run() {
                     } else {
                         settings.poll_idle_secs
                     };
-                    tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
-                    poll_once(&app_handle, &bg_state).await;
+                    tokio::select! {
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)) => {}
+                        _ = bg_state.poll_wake.notified() => {}
+                    }
+                    poll_once(&app_handle, &bg_state, true).await;
                 }
             });
 
@@ -870,7 +772,7 @@ pub fn run() {
         .run(|app_handle, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
-                show_main_window_internal(app_handle);
+                tray::show_main_window_internal(app_handle);
             }
             #[cfg(not(target_os = "macos"))]
             let _ = (app_handle, event);

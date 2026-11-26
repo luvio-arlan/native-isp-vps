@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, isTauriRuntime, subscribeEvent } from "../lib/tauri";
 import type {
   AiProbeResult,
@@ -167,11 +167,16 @@ export function useTelemetry() {
   const [isProbing, setIsProbing] = useState(false);
   const [isAuditing, setIsAuditing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
-    setTimeout(() => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
       setToast((prev) => (prev === msg ? null : prev));
+      toastTimerRef.current = null;
     }, 3200);
   }, []);
 
@@ -202,22 +207,26 @@ export function useTelemetry() {
       });
       return;
     }
-    const [n, active, snap, cfg] = await Promise.all([
-      api.listNodes(),
-      api.getActiveNodeId(),
-      api.getLatestTelemetry(),
-      api.getSettings(),
-    ]);
-    setNodes(n);
-    setActiveNodeId(active);
-    setSettings(cfg);
-    if (snap) {
-      setSnapshot(snap);
-    } else {
-      const fresh = await api.triggerRefresh();
-      if (fresh) setSnapshot(fresh);
+    try {
+      const [n, active, snap, cfg] = await Promise.all([
+        api.listNodes(),
+        api.getActiveNodeId(),
+        api.getLatestTelemetry(),
+        api.getSettings(),
+      ]);
+      setNodes(n);
+      setActiveNodeId(active);
+      setSettings(cfg);
+      if (snap) {
+        setSnapshot(snap);
+      } else {
+        const fresh = await api.triggerRefresh();
+        if (fresh) setSnapshot(fresh);
+      }
+    } catch {
+      showToast("初始化遥测状态失败，请稍后重试");
     }
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     hydrate();
@@ -245,6 +254,11 @@ export function useTelemetry() {
       })
     );
     register(
+      subscribeEvent<string | null>("cockpit://active-node-updated", (nextId) => {
+        setActiveNodeId(nextId);
+      })
+    );
+    register(
       subscribeEvent<NodeConfig>("cockpit://node-imported", (node) => {
         setActiveNodeId(node.id);
         showToast(`已自动纳管新节点：${node.name}`);
@@ -259,17 +273,28 @@ export function useTelemetry() {
     return () => {
       cancelled = true;
       unlisteners.forEach((fn) => fn());
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
     };
   }, [hydrate, showToast]);
 
-  const selectNode = useCallback(async (id: string) => {
-    setActiveNodeId(id);
-    if (isTauriRuntime()) {
-      await api.setActiveNode(id);
-      const cfg = await api.getSettings();
-      setSettings(cfg);
-    }
-  }, []);
+  const selectNode = useCallback(
+    async (id: string) => {
+      setActiveNodeId(id);
+      if (isTauriRuntime()) {
+        try {
+          await api.setActiveNode(id);
+          const cfg = await api.getSettings();
+          setSettings(cfg);
+        } catch {
+          showToast("切换节点失败");
+        }
+      }
+    },
+    [showToast]
+  );
 
   const addNode = useCallback(
     async (payload: HandoffPayload) => {
@@ -278,7 +303,7 @@ export function useTelemetry() {
       setNodes(all);
       setActiveNodeId(created.id);
       setSettings(cfg);
-      showToast(`节点已加密保存至系统钥匙串：${created.name}`);
+      showToast(`节点已安全保存至本地 0600 凭据库：${created.name}`);
       return created;
     },
     [showToast]
@@ -286,12 +311,16 @@ export function useTelemetry() {
 
   const removeNode = useCallback(
     async (id: string) => {
-      const updated = await api.deleteNode(id);
-      setNodes(updated);
-      const [active, cfg] = await Promise.all([api.getActiveNodeId(), api.getSettings()]);
-      setActiveNodeId(active);
-      setSettings(cfg);
-      showToast("已移除节点并清理钥匙串凭据");
+      try {
+        const updated = await api.deleteNode(id);
+        setNodes(updated);
+        const [active, cfg] = await Promise.all([api.getActiveNodeId(), api.getSettings()]);
+        setActiveNodeId(active);
+        setSettings(cfg);
+        showToast("已移除节点并清理本地凭据");
+      } catch {
+        showToast("移除节点失败");
+      }
     },
     [showToast]
   );
@@ -305,6 +334,8 @@ export function useTelemetry() {
       setLeakResult(leak);
       await api.triggerRefresh();
       showToast("端到端 AI 连通性与防泄露验真完成");
+    } catch {
+      showToast("验真测速执行失败，请检查网络连接");
     } finally {
       setIsProbing(false);
     }
@@ -317,6 +348,8 @@ export function useTelemetry() {
       const report = await api.runSshAudit(activeNodeId ?? undefined);
       setAuditReport(report);
       showToast(report.error ? "SSH 体检未完成，请查看详情" : `VPS 内核深度体检得分 ${report.score}/100`);
+    } catch {
+      showToast("SSH 体检调用失败");
     } finally {
       setIsAuditing(false);
     }
@@ -331,9 +364,13 @@ export function useTelemetry() {
         showToast("偏好设置已更新");
         return;
       }
-      const saved = await api.updateSettings(merged);
-      setSettings(saved);
-      showToast("偏好设置已更新");
+      try {
+        const saved = await api.updateSettings(merged);
+        setSettings(saved);
+        showToast("偏好设置已更新");
+      } catch {
+        showToast("保存偏好设置失败");
+      }
     },
     [settings, showToast]
   );
