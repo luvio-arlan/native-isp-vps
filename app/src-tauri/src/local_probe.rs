@@ -524,7 +524,8 @@ pub async fn probe_ai_endpoints() -> Vec<AiProbeResult> {
     ];
 
     let client = match Client::builder()
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(6))
+        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
         .user_agent("native-isp-cockpit/0.1")
         .build()
     {
@@ -536,11 +537,30 @@ pub async fn probe_ai_endpoints() -> Vec<AiProbeResult> {
     for (name, host, url) in targets {
         let c = client.clone();
         handles.push(tokio::spawn(async move {
-            let start = Instant::now();
-            match c.get(url).send().await {
+            // 1) Warmup HEAD opens TCP + proxy tunnel + TLS 1.3 + HTTP/2 connection
+            //    so cold handshake overhead does not inflate interactive 1-RTT latency.
+            let t_cold = Instant::now();
+            match c.head(url).send().await {
                 Ok(resp) => {
                     let code = resp.status().as_u16();
-                    let ms = (start.elapsed().as_secs_f64() * 1000.0).round();
+                    let cold_ms = (t_cold.elapsed().as_secs_f64() * 1000.0).round().max(1.0);
+                    drop(resp);
+
+                    // 2) Two back-to-back warmed HEAD probes over the live keep-alive/H2 stream;
+                    //    take the best (min) to suppress single-packet proxy micro-stutters.
+                    let mut best_warm_ms: Option<f64> = None;
+                    for _ in 0..2 {
+                        let t = Instant::now();
+                        if let Ok(r) = c.head(url).send().await {
+                            let ms = (t.elapsed().as_secs_f64() * 1000.0).round().max(1.0);
+                            drop(r);
+                            best_warm_ms = Some(match best_warm_ms {
+                                Some(prev) => prev.min(ms),
+                                None => ms,
+                            });
+                        }
+                    }
+
                     // 2xx, 3xx, 401, 403, 404 all prove clean TLS + API reachability (no geo-block / timeout)
                     let ok = code < 500 && code != 451;
                     AiProbeResult {
@@ -548,7 +568,7 @@ pub async fn probe_ai_endpoints() -> Vec<AiProbeResult> {
                         host: host.to_string(),
                         ok,
                         status_code: Some(code),
-                        latency_ms: Some(ms),
+                        latency_ms: Some(best_warm_ms.unwrap_or(cold_ms)),
                         error: if ok { None } else { Some(format!("HTTP {}", code)) },
                     }
                 }
