@@ -76,12 +76,16 @@ export const SparklineChart: React.FC<SparklineChartProps> = ({
       x: padX + i * stepX,
       y: padTop + innerH - (d.primary / maxVal) * innerH,
     }));
-    const secondaryPts = data
-      .filter((d) => d.secondary != null)
-      .map((d, i) => ({
-        x: padX + i * stepX,
-        y: padTop + innerH - ((d.secondary ?? 0) / maxVal) * innerH,
-      }));
+    const secondaryPts = data.flatMap((d, i) =>
+      d.secondary != null
+        ? [
+            {
+              x: padX + i * stepX,
+              y: padTop + innerH - (d.secondary / maxVal) * innerH,
+            },
+          ]
+        : []
+    );
     return { primaryPts, secondaryPts, maxVal };
   }, [data, innerW, innerH]);
 

@@ -3,11 +3,13 @@ use chrono::Utc;
 use reqwest::Client;
 use serde_json::Value;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 
 static PREV_TRAFFIC: Mutex<Option<(Instant, u64, u64)>> = Mutex::new(None);
+#[cfg(unix)]
+static CURRENT_UID: OnceLock<String> = OnceLock::new();
 
 pub async fn tcping(host: &str, port: u16) -> Option<f64> {
     let addr = format!("{}:{}", host, port);
@@ -20,14 +22,16 @@ pub async fn tcping(host: &str, port: u16) -> Option<f64> {
 
 #[cfg(unix)]
 fn find_mihomo_socket() -> Option<PathBuf> {
-    // Try current UID from `id -u`
-    let uid = std::process::Command::new("id")
-        .arg("-u")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "501".to_string());
+    let uid = CURRENT_UID.get_or_init(|| {
+        std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "501".to_string())
+    });
 
     let candidates = [
         PathBuf::from(format!(
@@ -145,7 +149,12 @@ pub async fn probe_local_shield(vps_host: Option<&str>) -> LocalShieldStatus {
     }
 
     if shield.mihomo_connected {
-        if let Ok((conns, _)) = mihomo_get("/connections").await {
+        let (conns_res, rules_res) = tokio::join!(
+            mihomo_get("/connections"),
+            mihomo_get("/rules")
+        );
+
+        if let Ok((conns, _)) = conns_res {
             let up_total = conns
                 .get("uploadTotal")
                 .and_then(|v| v.as_u64())
@@ -190,7 +199,7 @@ pub async fn probe_local_shield(vps_host: Option<&str>) -> LocalShieldStatus {
             }
         }
 
-        if let Ok((rules, _)) = mihomo_get("/rules").await {
+        if let Ok((rules, _)) = rules_res {
             if let Some(arr) = rules.get("rules").and_then(|v| v.as_array()) {
                 let has_quic_reject = arr.iter().any(|r| {
                     let payload = r.get("payload").and_then(|v| v.as_str()).unwrap_or("");

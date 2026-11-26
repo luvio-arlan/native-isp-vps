@@ -258,11 +258,13 @@
 }
 
 .titlebar-drag {
-  -webkit-app-region: drag;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .titlebar-nodrag {
-  -webkit-app-region: no-drag;
+  cursor: auto;
 }
 
 @keyframes pulse-ring {

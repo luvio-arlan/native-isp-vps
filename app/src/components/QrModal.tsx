@@ -40,10 +40,6 @@ export const QrModal: React.FC<QrModalProps> = ({ title, url, onClose }) => {
           {dataUrl && <img src={dataUrl} alt="Subscription QR" className="h-full w-full rounded-lg" />}
         </div>
 
-        <p className="mt-3 text-[11px] text-zinc-400">
-          支持 Shadowrocket / FlClash / Stash / Clash Verge Rev 直接扫码导入
-        </p>
-
         <button
           onClick={async () => {
             await navigator.clipboard.writeText(url);

@@ -220,25 +220,42 @@ export function useTelemetry() {
   useEffect(() => {
     hydrate();
 
+    let cancelled = false;
     const unlisteners: Array<() => void> = [];
-    subscribeEvent<TelemetrySnapshot>("cockpit://telemetry", (snap) => {
-      setSnapshot(snap);
-    }).then((u) => unlisteners.push(u));
+    const register = (p: Promise<() => void>) => {
+      p.then((unlisten) => {
+        if (cancelled) {
+          unlisten();
+        } else {
+          unlisteners.push(unlisten);
+        }
+      }).catch(() => {});
+    };
 
-    subscribeEvent<NodeConfig[]>("cockpit://nodes-updated", (updated) => {
-      setNodes(updated);
-    }).then((u) => unlisteners.push(u));
-
-    subscribeEvent<NodeConfig>("cockpit://node-imported", (node) => {
-      setActiveNodeId(node.id);
-      showToast(`已自动纳管新节点：${node.name}`);
-    }).then((u) => unlisteners.push(u));
-
-    subscribeEvent<AppSettings>("cockpit://settings-updated", (cfg) => {
-      setSettings(cfg);
-    }).then((u) => unlisteners.push(u));
+    register(
+      subscribeEvent<TelemetrySnapshot>("cockpit://telemetry", (snap) => {
+        setSnapshot(snap);
+      })
+    );
+    register(
+      subscribeEvent<NodeConfig[]>("cockpit://nodes-updated", (updated) => {
+        setNodes(updated);
+      })
+    );
+    register(
+      subscribeEvent<NodeConfig>("cockpit://node-imported", (node) => {
+        setActiveNodeId(node.id);
+        showToast(`已自动纳管新节点：${node.name}`);
+      })
+    );
+    register(
+      subscribeEvent<AppSettings>("cockpit://settings-updated", (cfg) => {
+        setSettings(cfg);
+      })
+    );
 
     return () => {
+      cancelled = true;
       unlisteners.forEach((fn) => fn());
     };
   }, [hydrate, showToast]);
@@ -305,8 +322,13 @@ export function useTelemetry() {
 
   const saveSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
-      if (!settings || !isTauriRuntime()) return;
+      if (!settings) return;
       const merged = { ...settings, ...patch };
+      if (!isTauriRuntime()) {
+        setSettings(merged);
+        showToast("偏好设置已更新");
+        return;
+      }
       const saved = await api.updateSettings(merged);
       setSettings(saved);
       showToast("偏好设置已更新");

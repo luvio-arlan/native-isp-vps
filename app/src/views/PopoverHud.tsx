@@ -63,9 +63,13 @@ export const PopoverHud: React.FC = () => {
   const handleCopySub = async () => {
     const url = primaryClient?.subUrl || activeNode.subUrl;
     if (!url) return;
-    await navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // Ignore clipboard permission errors in background popover
+    }
   };
 
   return (
@@ -192,7 +196,7 @@ export const PopoverHud: React.FC = () => {
             <div className="truncate whitespace-nowrap font-mono-num text-[9.5px] tracking-tight text-zinc-400">
               {snapshot?.localShield.mihomoConnected
                 ? `TUN ${snapshot.localShield.tunStack ?? "mixed"}`
-                : "待连 Clash"}
+                : "未连接"}
             </div>
           </div>
         </div>
@@ -218,7 +222,7 @@ export const PopoverHud: React.FC = () => {
               已用 {primaryPct.toFixed(1)}% · {daysUntilReset(activeNode.resetDay)} 天后重置
             </span>
             {snapshot && snapshot.clients.length > 1 && (
-              <span>共 {snapshot.clients.length} 位成员共享</span>
+              <span>{snapshot.clients.length} 位成员</span>
             )}
           </div>
         </div>

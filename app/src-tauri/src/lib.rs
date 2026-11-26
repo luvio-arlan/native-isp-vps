@@ -784,8 +784,13 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        let pos = rect.position.to_physical::<f64>(1.0);
-                        let size = rect.size.to_physical::<f64>(1.0);
+                        let scale = tray
+                            .app_handle()
+                            .get_webview_window("popover")
+                            .and_then(|w| w.scale_factor().ok())
+                            .unwrap_or(2.0);
+                        let pos = rect.position.to_physical::<f64>(scale);
+                        let size = rect.size.to_physical::<f64>(scale);
                         toggle_popover_at(tray.app_handle(), pos.x, pos.y, size.width, size.height);
                     }
                 })
@@ -858,6 +863,14 @@ pub fn run() {
             collapse_to_tray,
             hide_popover
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Native ISP Cockpit");
+        .build(tauri::generate_context!())
+        .expect("error while building Native ISP Cockpit")
+        .run(|app_handle, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_main_window_internal(app_handle);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app_handle, event);
+        });
 }

@@ -42,28 +42,25 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     <div className="space-y-4">
       {/* GitHub Releases Auto-Update Panel */}
       <div className="glass-card rounded-2xl p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-[14px] font-semibold text-zinc-100">
               <Github className="h-4 w-4 text-emerald-400" />
-              GitHub Releases 自动更新
+              软件更新
             </div>
-            <p className="mt-1 text-[12px] text-zinc-400">
-              监听 <code className="rounded bg-white/8 px-1.5 py-0.5 text-zinc-200">luvio-arlan/native-isp-vps</code> 最新 Release；推送新版本 Tag 后自动签名构建并支持应用内一键静默更新。
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-3 font-mono-num text-[11.5px]">
+            <div className="mt-2.5 flex flex-wrap items-center gap-2.5 font-mono-num text-[11.5px]">
               <span className="rounded-lg border border-white/10 bg-black/35 px-2.5 py-1 text-zinc-200">
-                当前版本 v{releaseInfo?.currentVersion ?? "0.1.0"}
+                当前 v{releaseInfo?.currentVersion ?? "0.1.0"}
               </span>
               {releaseInfo?.latestVersion && (
                 <span className="rounded-lg border border-white/10 bg-black/35 px-2.5 py-1 text-zinc-300">
-                  GitHub 最新 v{releaseInfo.latestVersion}
+                  最新 v{releaseInfo.latestVersion}
                 </span>
               )}
               {updateStage === "up-to-date" && (
                 <span className="inline-flex items-center gap-1 text-emerald-300">
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                  已是最新版本
+                  已是最新
                 </span>
               )}
               {updateError && <span className="text-rose-300">{updateError}</span>}
@@ -123,42 +120,34 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       <div className="glass-card rounded-2xl p-5">
         <div className="mb-4 flex items-center gap-2 text-[14px] font-semibold text-zinc-100">
           <Sliders className="h-4 w-4 text-sky-400" />
-          外观质感、状态栏与自适应采样策略
+          外观与状态栏
         </div>
 
-        <div className="mb-4 rounded-xl border border-white/7 bg-black/30 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-[12.5px] font-medium text-zinc-100">界面质感皮肤（主窗口与状态栏同步）</div>
-              <div className="mt-0.5 text-[11px] text-zinc-500">
-                支持 Apple 原色钛合金拉丝浅色皮肤与曜石暗夜专业仪表盘
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-black/35 p-1">
-              {[
-                { id: "titanium", label: "原色钛合金 · 浅色" },
-                { id: "obsidian", label: "曜石黑 · 暗夜" },
-              ].map((opt) => (
-                <button
-                  key={opt.id}
-                  onClick={() => onSaveSettings({ theme: opt.id })}
-                  className={`rounded-lg px-3 py-1.5 text-[11.5px] font-medium transition ${
-                    (settings.theme || "titanium") === opt.id
-                      ? "bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-500/40"
-                      : "text-zinc-400 hover:bg-white/10"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
+        <div className="mb-3.5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/7 bg-black/30 px-4 py-3">
+          <div className="text-[12.5px] font-medium text-zinc-100">外观主题</div>
+          <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-black/35 p-1">
+            {[
+              { id: "titanium", label: "钛合金 · 浅色" },
+              { id: "obsidian", label: "曜石黑 · 暗夜" },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => onSaveSettings({ theme: opt.id })}
+                className={`rounded-lg px-3 py-1.5 text-[11.5px] font-medium transition ${
+                  (settings.theme || "titanium") === opt.id
+                    ? "bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-500/40"
+                    : "text-zinc-400 hover:bg-white/10"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-3.5">
           <div className="rounded-xl border border-white/7 bg-black/30 p-4">
-            <div className="text-[12.5px] font-medium text-zinc-100">顶部菜单栏展示模式</div>
-            <p className="mt-0.5 text-[11px] text-zinc-500">macOS 菜单栏实时数字展示风格</p>
+            <div className="text-[12.5px] font-medium text-zinc-100">状态栏显示</div>
             <div className="mt-3 grid grid-cols-3 gap-1.5">
               {[
                 { id: "speed-rtt", label: "网速+延迟" },
@@ -181,8 +170,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           </div>
 
           <div className="rounded-xl border border-white/7 bg-black/30 p-4">
-            <div className="text-[12.5px] font-medium text-zinc-100">自适应轮询节奏（保护 1GB VPS）</div>
-            <p className="mt-0.5 text-[11px] text-zinc-500">窗口收起到状态栏后自动降低远端 API 频率</p>
+            <div className="text-[12.5px] font-medium text-zinc-100">刷新频率</div>
             <div className="mt-3 flex items-center gap-3 font-mono-num text-[12px]">
               <label className="flex items-center gap-1.5 text-zinc-300">
                 <span>活跃</span>
@@ -198,7 +186,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 </select>
               </label>
               <label className="flex items-center gap-1.5 text-zinc-300">
-                <span>后台省电</span>
+                <span>后台</span>
                 <select
                   value={settings.pollIdleSecs}
                   onChange={(e) => onSaveSettings({ pollIdleSecs: Number(e.target.value) })}
@@ -214,13 +202,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/7 bg-black/30 px-4 py-3">
-          <div>
-            <div className="text-[12.5px] font-medium text-zinc-100">演示预览模式（Demo Mode）</div>
-            <div className="text-[11px] text-zinc-500">
-              未接入真实 VPS 时自动开启；接入真实节点后自动切换为实测数据
-            </div>
-          </div>
+        <div className="mt-3.5 flex items-center justify-between gap-3 rounded-xl border border-white/7 bg-black/30 px-4 py-3">
+          <div className="text-[12.5px] font-medium text-zinc-100">演示模式</div>
           <button
             onClick={() => onSaveSettings({ demoMode: !settings.demoMode })}
             className={`relative h-6 w-11 rounded-full transition ${
@@ -240,11 +223,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       <div className="glass-card rounded-2xl p-5">
         <div className="flex items-center gap-2 text-[13px] font-semibold text-zinc-100">
           <FolderSync className="h-4 w-4 text-emerald-400" />
-          AI Skill 自动交接收件箱（Zero-Touch Inbox）
+          自动导入目录
         </div>
-        <p className="mt-1 text-[11.5px] text-zinc-400">
-          当 AI 完成 <code className="rounded bg-white/8 px-1 py-0.5 text-emerald-300">native-isp-vps</code> 部署并将交接 JSON 写入该目录时，看板会在 1 秒内加密导入系统钥匙串并自动粉碎临时文件。
-        </p>
         <div className="mt-2.5 select-text rounded-xl border border-white/8 bg-black/40 px-3.5 py-2.5 font-mono-num text-[11.5px] text-zinc-300">
           {settings.inboxDir}
         </div>

@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Activity,
   Gauge,
@@ -24,7 +25,7 @@ import { UsersTab } from "./UsersTab";
 import { AuditTab } from "./AuditTab";
 import { ShieldTab } from "./ShieldTab";
 import { SettingsTab } from "./SettingsTab";
-import { api } from "../lib/tauri";
+import { api, isTauriRuntime } from "../lib/tauri";
 
 type NavKey = "overview" | "network" | "users" | "audit" | "shield" | "settings";
 
@@ -45,6 +46,21 @@ export const CockpitApp: React.FC = () => {
   const [nav, setNav] = useState<NavKey>(initialTab);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [qrState, setQrState] = useState<{ title: string; url: string } | null>(null);
+
+  const handleDragMouseDown = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    if (e.button !== 0 || e.detail >= 2 || !isTauriRuntime()) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("button, input, textarea, select, a, [data-no-drag]")) return;
+    e.preventDefault();
+    getCurrentWindow().startDragging().catch(() => {});
+  }, []);
+
+  const handleTitlebarDoubleClick = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    if (!isTauriRuntime()) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("button, input, textarea, select, a, [data-no-drag]")) return;
+    getCurrentWindow().toggleMaximize().catch(() => {});
+  }, []);
 
   const {
     nodes,
@@ -75,15 +91,25 @@ export const CockpitApp: React.FC = () => {
       {/* Left Fleet & Navigation Rail */}
       <aside className="cockpit-rail flex w-[238px] shrink-0 flex-col">
         {/* macOS Overlay Traffic Light Safe Drag Area */}
-        <div className="titlebar-drag flex h-12 items-center justify-end px-4 pt-2">
-          <span className="rounded-md border border-white/8 bg-white/[0.04] px-2 py-0.5 font-mono-num text-[10px] tracking-wider text-zinc-400">
+        <div
+          data-tauri-drag-region
+          onMouseDown={handleDragMouseDown}
+          onDoubleClick={handleTitlebarDoubleClick}
+          className="titlebar-drag flex h-12 items-center justify-end px-4 pt-2"
+        >
+          <span className="pointer-events-none rounded-md border border-white/8 bg-white/[0.04] px-2 py-0.5 font-mono-num text-[10px] tracking-wider text-zinc-400">
             v{updater.releaseInfo?.currentVersion ?? "0.1.0"}
           </span>
         </div>
 
         {/* Brand */}
-        <div className="px-4 pb-3 pt-1">
-          <div className="flex items-center gap-2.5">
+        <div
+          data-tauri-drag-region
+          onMouseDown={handleDragMouseDown}
+          onDoubleClick={handleTitlebarDoubleClick}
+          className="titlebar-drag px-4 pb-3 pt-1"
+        >
+          <div className="pointer-events-none flex items-center gap-2.5">
             <img
               src="/brand-icon.png"
               alt="Native ISP"
@@ -200,8 +226,13 @@ export const CockpitApp: React.FC = () => {
       {/* Main Telemetry Workspace */}
       <main className="flex min-w-0 flex-1 flex-col">
         {/* Top Draggable Header Bar */}
-        <header className="cockpit-header titlebar-drag flex h-14 shrink-0 items-center justify-between px-6">
-          <div className="flex items-center gap-3">
+        <header
+          data-tauri-drag-region
+          onMouseDown={handleDragMouseDown}
+          onDoubleClick={handleTitlebarDoubleClick}
+          className="cockpit-header titlebar-drag flex h-14 shrink-0 items-center justify-between px-6"
+        >
+          <div className="pointer-events-none flex items-center gap-3">
             <h1 className="text-[15px] font-semibold tracking-tight text-zinc-100">
               {activeNode.name}
             </h1>
@@ -219,7 +250,7 @@ export const CockpitApp: React.FC = () => {
             />
           </div>
 
-          <div className="titlebar-nodrag flex items-center gap-2">
+          <div data-no-drag className="titlebar-nodrag flex items-center gap-2">
             <UpdateBanner
               stage={updater.stage}
               releaseInfo={updater.releaseInfo}

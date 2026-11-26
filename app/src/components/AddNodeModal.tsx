@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Bot, Check, Copy, FileJson, KeyRound, Server, Sparkles, X } from "lucide-react";
 import type { HandoffPayload } from "../types/telemetry";
 import { buildAiDeployPrompt } from "../lib/diagnostic";
@@ -38,14 +38,28 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
   // JSON import
   const [rawJson, setRawJson] = useState("");
 
+  useEffect(() => {
+    if (!open) return;
+    setError(null);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   const deployPrompt = buildAiDeployPrompt();
 
   const handleCopyPrompt = async () => {
-    await navigator.clipboard.writeText(deployPrompt);
-    setCopiedPrompt(true);
-    setTimeout(() => setCopiedPrompt(false), 2000);
+    try {
+      await navigator.clipboard.writeText(deployPrompt);
+      setCopiedPrompt(true);
+      setTimeout(() => setCopiedPrompt(false), 2000);
+    } catch {
+      setError("复制失败，请手动选中文本复制");
+    }
   };
 
   const handleManualSubmit = async (e: React.FormEvent) => {
@@ -99,15 +113,15 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md"
+    >
       <div className="glass-card relative w-full max-w-xl rounded-2xl border border-white/12 p-5 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-[16px] font-semibold text-zinc-100">接入海外 VPS 节点</h2>
-            <p className="mt-0.5 text-[12px] text-zinc-400">
-              API Token 与面板密码仅加密写入本机系统钥匙串，永不明文落盘
-            </p>
-          </div>
+          <h2 className="text-[16px] font-semibold text-zinc-100">接入 VPS 节点</h2>
           <button
             onClick={onClose}
             className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-white/8 hover:text-zinc-100"
@@ -207,7 +221,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
             </div>
 
             <label className="block">
-              <span className="mb-1 block text-[11px] text-zinc-400">3x-ui 面板完整地址（含 WebBasePath）*</span>
+              <span className="mb-1 block text-[11px] text-zinc-400">3x-ui 面板地址 *</span>
               <input
                 value={panelUrl}
                 onChange={(e) => setPanelUrl(e.target.value)}
@@ -243,7 +257,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
 
             <div className="grid grid-cols-2 gap-2.5">
               <label className="block">
-                <span className="mb-1 block text-[11px] text-zinc-400">面板用户名（Token 不可用时备用）</span>
+                <span className="mb-1 block text-[11px] text-zinc-400">面板用户名</span>
                 <input
                   value={panelUsername}
                   onChange={(e) => setPanelUsername(e.target.value)}
@@ -252,7 +266,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
                 />
               </label>
               <label className="block">
-                <span className="mb-1 block text-[11px] text-zinc-400">面板密码（存入系统钥匙串）</span>
+                <span className="mb-1 block text-[11px] text-zinc-400">面板密码</span>
                 <input
                   type="password"
                   value={panelPassword}
@@ -264,7 +278,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
             </div>
 
             <label className="block">
-              <span className="mb-1 block text-[11px] text-zinc-400">万能订阅链接（用于一键复制与手机扫码）</span>
+              <span className="mb-1 block text-[11px] text-zinc-400">订阅链接</span>
               <input
                 value={subUrl}
                 onChange={(e) => setSubUrl(e.target.value)}
@@ -291,7 +305,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
                 />
               </label>
               <label className="block">
-                <span className="mb-1 block text-[11px] text-zinc-400">SSH 私钥路径（体检）</span>
+                <span className="mb-1 block text-[11px] text-zinc-400">SSH 私钥路径</span>
                 <input
                   value={sshKeyPath}
                   onChange={(e) => setSshKeyPath(e.target.value)}

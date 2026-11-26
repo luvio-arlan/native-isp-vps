@@ -52,16 +52,13 @@ export const AuditTab: React.FC<AuditTabProps> = ({
           />
           <div>
             <h3 className="text-[15px] font-semibold text-zinc-100">
-              VPS 跨洋内核调优 & 安全合规体检
+              内核合规体检
             </h3>
-            <p className="mt-1 text-[12px] text-zinc-400">
-              基于 <code className="rounded bg-white/8 px-1 py-0.5 text-emerald-300">SKILL.md</code> 标准逐项核验 FQ 队列、BBR、防 SYN 黑洞、UFW 最小暴露与 Fail2ban 拦截记录。
-            </p>
             {report?.fail2banBannedTotal != null && (
               <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-0.5 font-mono-num text-[11px] text-emerald-300">
                 <Shield className="h-3 w-3" />
-                Fail2ban 已累计拦截 {report.fail2banBannedTotal} 次 SSH 爆破尝试（当前封禁{" "}
-                {report.fail2banBannedCurrent ?? 0} 个 IP）
+                Fail2ban 拦截 {report.fail2banBannedTotal} 次 · 封禁{" "}
+                {report.fail2banBannedCurrent ?? 0} IP
               </div>
             )}
           </div>
@@ -77,7 +74,7 @@ export const AuditTab: React.FC<AuditTabProps> = ({
             ) : (
               <Bot className="h-3.5 w-3.5 text-sky-400" />
             )}
-            {copiedPrompt ? "已复制诊断包" : "复制 AI 修复诊断包"}
+            {copiedPrompt ? "已复制" : "复制诊断包"}
           </button>
 
           <button
@@ -86,7 +83,7 @@ export const AuditTab: React.FC<AuditTabProps> = ({
             className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2 text-[12px] font-medium text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-50"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isAuditing ? "animate-spin" : ""}`} />
-            {isAuditing ? "SSH 体检中..." : "运行深度体检"}
+            {isAuditing ? "体检中..." : "开始体检"}
           </button>
         </div>
       </div>
@@ -105,9 +102,6 @@ export const AuditTab: React.FC<AuditTabProps> = ({
         <div className="glass-card rounded-2xl p-10 text-center">
           <Terminal className="mx-auto h-7 w-7 text-zinc-500" />
           <p className="mt-3 text-[13px] text-zinc-300">尚未执行内核合规体检</p>
-          <p className="mt-1 text-[11.5px] text-zinc-500">
-            点击右上角「运行深度体检」，只读核验 VPS 内核参数是否因系统重启发生漂移
-          </p>
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-3">
@@ -127,10 +121,10 @@ export const AuditTab: React.FC<AuditTabProps> = ({
                 )}
               </div>
               <div className="mt-2.5 font-mono-num text-[12px] text-zinc-200">
-                实测：{item.actual || "--"}
+                当前：{item.actual || "--"}
               </div>
               <div className="mt-0.5 font-mono-num text-[10.5px] text-zinc-500">
-                基线要求：{item.expected}
+                基线：{item.expected}
               </div>
             </div>
           ))}

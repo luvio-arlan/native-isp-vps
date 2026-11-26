@@ -28,8 +28,16 @@ pub async fn run_ssh_audit(node: &NodeConfig) -> AuditReport {
         .arg(node.ssh_port.to_string());
 
     if let Some(key_path) = &node.ssh_key_path {
-        if !key_path.trim().is_empty() {
-            cmd.arg("-i").arg(key_path);
+        let trimmed = key_path.trim();
+        if !trimmed.is_empty() {
+            let expanded = if let Some(rest) = trimmed.strip_prefix("~/") {
+                dirs::home_dir()
+                    .map(|h| h.join(rest).to_string_lossy().to_string())
+                    .unwrap_or_else(|| trimmed.to_string())
+            } else {
+                trimmed.to_string()
+            };
+            cmd.arg("-i").arg(expanded);
         }
     }
 
