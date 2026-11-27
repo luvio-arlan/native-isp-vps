@@ -6,6 +6,7 @@ interface CarrierQualityCardProps {
   quality: CarrierQualitySnapshot | null;
   isProbing: boolean;
   onProbe: () => void;
+  compact?: boolean;
 }
 
 const SLOTS = 24;
@@ -56,20 +57,20 @@ function buildPaddedSlots(samples: CarrierSample[]): Array<CarrierSample | null>
 }
 
 export const CarrierQualityCard: React.FC<CarrierQualityCardProps> = React.memo(
-  ({ quality, isProbing, onProbe }) => {
+  ({ quality, isProbing, onProbe, compact = false }) => {
     const carriers =
       quality && quality.carriers.length > 0 ? quality.carriers : FALLBACK_CARRIERS;
 
     return (
-      <div className="glass-card glass-card-hover rounded-2xl p-5">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+      <div className={`glass-card glass-card-hover rounded-2xl ${compact ? "px-4 py-3.5" : "p-5"}`}>
+        <div className={`${compact ? "mb-2.5" : "mb-4"} flex flex-wrap items-center justify-between gap-2`}>
           <div className="flex items-center gap-2.5">
-            <div className="flex items-center gap-2 text-[13px] font-semibold text-zinc-100">
-              <Activity className="h-4 w-4 text-emerald-400" />
+            <div className="flex items-center gap-2 text-[12.5px] font-semibold text-zinc-100">
+              <Activity className="h-3.5 w-3.5 text-emerald-400" />
               三网回程质量
             </div>
             {quality?.updatedAt ? (
-              <span className="font-mono-num text-[11px] text-zinc-500">
+              <span className="font-mono-num text-[10.5px] text-zinc-500">
                 更新于 {formatClock(quality.updatedAt)}
               </span>
             ) : null}
@@ -78,36 +79,36 @@ export const CarrierQualityCard: React.FC<CarrierQualityCardProps> = React.memo(
           <button
             onClick={onProbe}
             disabled={isProbing}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-1.5 text-[11.5px] font-medium text-zinc-200 transition hover:bg-white/12 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-2.5 py-1 text-[11px] font-medium text-zinc-200 transition hover:bg-white/12 disabled:opacity-50"
           >
-            <RefreshCw className={`h-3.5 w-3.5 text-emerald-400 ${isProbing ? "animate-spin" : ""}`} />
+            <RefreshCw className={`h-3 w-3 text-emerald-400 ${isProbing ? "animate-spin" : ""}`} />
             {isProbing ? "探测中..." : "立即测三网"}
           </button>
         </div>
 
-        <div className="space-y-3.5">
+        <div className={compact ? "space-y-2" : "space-y-3.5"}>
           {carriers.map((line) => {
             const slots = buildPaddedSlots(line.samples);
             return (
               <div key={line.key} className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-5">
                 {/* Left: Latency Capsule Bar */}
                 <div>
-                  <div className="mb-1.5 flex items-baseline justify-between">
+                  <div className={compact ? "mb-1 flex items-baseline justify-between" : "mb-1.5 flex items-baseline justify-between"}>
                     <div className="flex items-baseline gap-2">
-                      <span className="text-[12.5px] font-medium text-zinc-200">
+                      <span className="text-[12px] font-medium text-zinc-200">
                         {line.label}
                       </span>
-                      <span className="font-mono-num text-[10.5px] text-zinc-500">
+                      <span className="font-mono-num text-[10px] text-zinc-500">
                         {line.target}
                       </span>
                     </div>
-                    <div className="font-mono-num text-[13px] font-semibold">
+                    <div className="font-mono-num text-[12.5px] font-semibold">
                       {line.latestRttMs != null ? (
                         <>
                           <span className={rttTextColor(line.latestRttMs)}>
                             {Math.round(line.latestRttMs)}
                           </span>
-                          <span className="ml-0.5 text-[10.5px] font-normal text-zinc-500">
+                          <span className="ml-0.5 text-[10px] font-normal text-zinc-500">
                             ms
                           </span>
                         </>
@@ -127,7 +128,7 @@ export const CarrierQualityCard: React.FC<CarrierQualityCardProps> = React.memo(
                               } · 丢包 ${sample.lossPct.toFixed(1)}%`
                             : "等待采样"
                         }
-                        className={`h-3 flex-1 rounded-[3px] transition-all duration-300 ${
+                        className={`${compact ? "h-2.5" : "h-3"} flex-1 rounded-[3px] transition-all duration-300 ${
                           sample
                             ? rttBarColor(sample.rttMs, sample.lossPct)
                             : "carrier-slot-empty"
@@ -139,13 +140,13 @@ export const CarrierQualityCard: React.FC<CarrierQualityCardProps> = React.memo(
 
                 {/* Right: Loss Rate Capsule Bar */}
                 <div>
-                  <div className="mb-1.5 flex items-baseline justify-between">
-                    <span className="text-[11px] text-zinc-500">丢包率</span>
-                    <div className="font-mono-num text-[13px] font-semibold">
+                  <div className={compact ? "mb-1 flex items-baseline justify-between" : "mb-1.5 flex items-baseline justify-between"}>
+                    <span className="text-[10.5px] text-zinc-500">丢包率</span>
+                    <div className="font-mono-num text-[12.5px] font-semibold">
                       <span className={lossTextColor(line.lossPct)}>
                         {line.lossPct.toFixed(1)}
                       </span>
-                      <span className="ml-0.5 text-[10.5px] font-normal text-zinc-500">
+                      <span className="ml-0.5 text-[10px] font-normal text-zinc-500">
                         %
                       </span>
                     </div>
@@ -159,7 +160,7 @@ export const CarrierQualityCard: React.FC<CarrierQualityCardProps> = React.memo(
                             ? `${line.label} · ${formatClock(sample.ts)} · 丢包 ${sample.lossPct.toFixed(1)}%`
                             : "等待采样"
                         }
-                        className={`h-3 flex-1 rounded-[3px] transition-all duration-300 ${
+                        className={`${compact ? "h-2.5" : "h-3"} flex-1 rounded-[3px] transition-all duration-300 ${
                           sample ? lossBarColor(sample.lossPct) : "carrier-slot-empty"
                         }`}
                       />

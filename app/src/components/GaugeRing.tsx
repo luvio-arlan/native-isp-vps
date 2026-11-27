@@ -16,7 +16,7 @@ export const GaugeRing: React.FC<GaugeRingProps> = ({
   invertColor = false,
 }) => {
   const clamped = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
-  const stroke = 6.5;
+  const stroke = size <= 74 ? 5.5 : 6.5;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (clamped / 100) * circumference;
@@ -62,15 +62,19 @@ export const GaugeRing: React.FC<GaugeRingProps> = ({
           />
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="font-mono-num text-[17px] font-semibold tracking-tight text-zinc-100">
+          <span
+            className={`font-mono-num font-semibold tracking-tight text-zinc-100 ${
+              size <= 74 ? "text-[15px]" : "text-[17px]"
+            }`}
+          >
             {Math.round(clamped)}
             <span className="text-[10px] font-normal text-zinc-400">{invertColor ? "" : "%"}</span>
           </span>
         </div>
       </div>
-      <div className="text-center">
-        <div className="text-[12px] font-medium text-zinc-200">{label}</div>
-        {sublabel && <div className="font-mono-num text-[10px] text-zinc-500">{sublabel}</div>}
+      <div className="text-center leading-tight">
+        <div className="text-[11.5px] font-medium text-zinc-200">{label}</div>
+        {sublabel && <div className="mt-0.5 font-mono-num text-[10px] text-zinc-500">{sublabel}</div>}
       </div>
     </div>
   );

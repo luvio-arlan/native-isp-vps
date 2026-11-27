@@ -93,27 +93,27 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Row 1: Hero Throughput + Health Radar */}
-      <div className="grid grid-cols-12 gap-4">
-        <div className="glass-card glass-card-hover col-span-8 rounded-2xl p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="grid grid-cols-12 gap-3.5">
+        <div className="glass-card glass-card-hover col-span-8 rounded-2xl p-4">
+          <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
               <div className="flex items-center gap-2 text-[12px] font-medium text-zinc-400">
                 <Radio className="h-3.5 w-3.5 text-emerald-400" />
                 实时吞吐
               </div>
-              <div className="mt-2.5 flex items-baseline gap-6">
+              <div className="mt-1.5 flex items-baseline gap-5">
                 <div className="flex items-baseline gap-1.5 font-mono-num">
-                  <ArrowDown className="h-4 w-4 text-emerald-400" />
-                  <span className="text-[32px] font-semibold leading-none tracking-tight text-zinc-50">
+                  <ArrowDown className="h-3.5 w-3.5 text-emerald-400" />
+                  <span className="text-[28px] font-semibold leading-none tracking-tight text-zinc-50">
                     {downFmt.value}
                   </span>
-                  <span className="text-[12px] text-zinc-400">{downFmt.unit}</span>
+                  <span className="text-[11.5px] text-zinc-400">{downFmt.unit}</span>
                 </div>
                 <div className="flex items-baseline gap-1.5 font-mono-num">
                   <ArrowUp className="h-3.5 w-3.5 text-sky-400" />
-                  <span className="text-[20px] font-semibold leading-none text-zinc-200">
+                  <span className="text-[18px] font-semibold leading-none text-zinc-200">
                     {upFmt.value}
                   </span>
                   <span className="text-[11px] text-zinc-500">{upFmt.unit}</span>
@@ -145,15 +145,15 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             </div>
           </div>
 
-          <div className="mt-4">
+          <div className="mt-2.5">
             <SparklineChart
               data={speedSeries}
-              height={162}
+              height={106}
               formatValue={formatSpeedInline}
             />
           </div>
 
-          <div className="mt-3 flex items-center justify-between border-t border-white/6 pt-3 text-[11px] text-zinc-400">
+          <div className="mt-2.5 flex items-center justify-between border-t border-white/6 pt-2.5 text-[11px] text-zinc-400">
             <div className="flex items-center gap-4 font-mono-num">
               <span>
                 累计发送{" "}
@@ -181,7 +181,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </div>
 
         {/* Health Score & RTT Card */}
-        <div className="glass-card glass-card-hover col-span-4 flex flex-col justify-between rounded-2xl p-5">
+        <div className="glass-card glass-card-hover col-span-4 flex flex-col justify-between rounded-2xl p-4">
           <div className="flex items-center justify-between">
             <span className="text-[12px] font-medium text-zinc-400">
               节点健康
@@ -191,7 +191,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             </span>
           </div>
 
-          <div className="my-2 flex justify-center">
+          <div className="my-1 flex justify-center">
             <GaugeRing
               value={snapshot?.healthScore ?? 0}
               label={
@@ -202,12 +202,12 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                     : "需要排查"
               }
               sublabel={`Uptime ${formatUptime(xui?.uptimeSecs ?? 0)}`}
-              size={112}
+              size={90}
               invertColor
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-2 border-t border-white/6 pt-3 text-center">
+          <div className="grid grid-cols-3 gap-2 border-t border-white/6 pt-2.5 text-center">
             <div>
               <div className="text-[10.5px] text-zinc-500">延迟</div>
               <div className="mt-0.5 font-mono-num text-[13px] font-semibold text-zinc-100">
@@ -235,11 +235,11 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       </div>
 
       {/* Row 2: VPS Hardware Rings + Quota Forecast */}
-      <div className="grid grid-cols-12 gap-4">
-        <div className="glass-card glass-card-hover col-span-7 rounded-2xl p-5">
-          <div className="mb-4 flex items-center justify-between">
+      <div className="grid grid-cols-12 gap-3.5">
+        <div className="glass-card glass-card-hover col-span-7 rounded-2xl p-4">
+          <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2 text-[12px] font-medium text-zinc-200">
-              <Cpu className="h-4 w-4 text-sky-400" />
+              <Cpu className="h-3.5 w-3.5 text-sky-400" />
               硬件状态
             </div>
             <span className="font-mono-num text-[11px] text-zinc-500">
@@ -247,27 +247,30 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             </span>
           </div>
 
-          <div className="grid grid-cols-4 gap-3">
-            <GaugeRing value={xui?.cpuPercent ?? 0} label="CPU" />
+          <div className="grid grid-cols-4 gap-2">
+            <GaugeRing value={xui?.cpuPercent ?? 0} label="CPU" size={70} />
             <GaugeRing
               value={memPct}
               label="内存"
               sublabel={xui ? `${formatBytes(xui.memUsed)} / ${formatBytes(xui.memTotal)}` : "--"}
+              size={70}
             />
             <GaugeRing
               value={swapPct}
               label="Swap"
               sublabel={xui && xui.swapTotal > 0 ? formatBytes(xui.swapUsed) : "未启用"}
+              size={70}
             />
             <GaugeRing
               value={diskPct}
               label="磁盘"
               sublabel={xui ? formatBytes(xui.diskUsed) : "--"}
+              size={70}
             />
           </div>
         </div>
 
-        <div className="glass-card glass-card-hover col-span-5 flex flex-col justify-between rounded-2xl p-5">
+        <div className="glass-card glass-card-hover col-span-5 flex flex-col justify-between rounded-2xl p-4">
           <div>
             <div className="flex items-center justify-between">
               <span className="text-[12px] font-medium text-zinc-200">月度流量</span>
@@ -276,14 +279,14 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
               </span>
             </div>
 
-            <div className="mt-3 flex items-baseline justify-between font-mono-num">
-              <span className="text-[22px] font-semibold text-zinc-100">
+            <div className="mt-2 flex items-baseline justify-between font-mono-num">
+              <span className="text-[20px] font-semibold text-zinc-100">
                 {formatBytes(totalUsedBytes)}
               </span>
-              <span className="text-[12px] text-zinc-400">/ {node.monthlyTotalGb} GB</span>
+              <span className="text-[11.5px] text-zinc-400">/ {node.monthlyTotalGb} GB</span>
             </div>
 
-            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/8">
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/8">
               <div
                 className={`h-full rounded-full transition-all duration-500 ${
                   forecast.pct > 85
@@ -294,7 +297,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
               />
             </div>
 
-            <div className="mt-2.5 flex items-center justify-between text-[11.5px]">
+            <div className="mt-2 flex items-center justify-between text-[11px]">
               <span className="font-mono-num text-zinc-400">
                 预计月耗 {formatBytes(forecast.projectedBytes)}
               </span>
@@ -304,10 +307,10 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             </div>
           </div>
 
-          <div className="mt-3 flex gap-2 border-t border-white/6 pt-3">
+          <div className="mt-2.5 flex gap-2 border-t border-white/6 pt-2.5">
             <button
               onClick={handleCopySub}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 py-2 text-[12px] font-medium text-zinc-100 transition hover:bg-white/12"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 py-1.5 text-[11.5px] font-medium text-zinc-100 transition hover:bg-white/12"
             >
               {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 text-sky-400" />}
               {copied ? "已复制" : "复制订阅"}
@@ -315,7 +318,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             {subUrl && (
               <button
                 onClick={() => onShowQr(`${node.city} 订阅二维码`, subUrl)}
-                className="flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3.5 py-2 text-[12px] font-medium text-zinc-200 transition hover:bg-white/12"
+                className="flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 px-3 py-1.5 text-[11.5px] font-medium text-zinc-200 transition hover:bg-white/12"
               >
                 <QrCode className="h-3.5 w-3.5 text-emerald-400" />
                 扫码
@@ -330,10 +333,11 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         quality={carrierQuality}
         isProbing={isProbingCarriers}
         onProbe={onProbeCarriers}
+        compact
       />
 
       {/* Row 4: Quick Status Footer Bar */}
-      <div className="glass-card flex flex-wrap items-center justify-between gap-3 rounded-2xl px-5 py-3.5 text-[12px]">
+      <div className="glass-card flex flex-wrap items-center justify-between gap-3 rounded-2xl px-4 py-2.5 text-[11.5px]">
         <div className="flex flex-wrap items-center gap-5">
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-emerald-400" />

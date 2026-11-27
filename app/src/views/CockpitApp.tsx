@@ -301,7 +301,7 @@ export const CockpitApp: React.FC = () => {
         </header>
 
         {/* Active View Stage */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
+        <div className="flex-1 overflow-y-auto px-5 py-3.5">
           {nav === "overview" && (
             <OverviewTab
               node={activeNode}
