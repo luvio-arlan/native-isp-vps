@@ -1,9 +1,10 @@
+use crate::carrier_probe;
 use crate::demo;
 use crate::inbox;
 use crate::local_probe;
-use crate::metrics::{compute_health_score, compute_smoothed_rtt};
+use crate::metrics::{compute_health_score_with_streak, compute_smoothed_rtt};
 use crate::mihomo;
-use crate::models::{TelemetryPoint, TelemetrySnapshot};
+use crate::models::{CarrierQualitySnapshot, TelemetryPoint, TelemetrySnapshot};
 use crate::state::{self, CockpitState};
 use crate::storage;
 use crate::tray;
@@ -101,7 +102,7 @@ pub async fn poll_once(
         }
 
         let now_ms = Utc::now().timestamp_millis();
-        let (history_vec, jitter_ms, packet_loss_pct, persist_snap) = {
+        let (history_vec, jitter_ms, packet_loss_pct, health_score, health_status, persist_snap) = {
             let mut store = state.history.write().await;
             let (hist, j, loss) = store.record_real(
                 &node.id,
@@ -114,8 +115,22 @@ pub async fn poll_once(
                     local_up_bps: shield.local_up_bps,
                 },
             );
+            let xui_fail_streak = store.record_xui_connectivity(&node.id, xui_status.connected);
+            let smoothed_rtt = compute_smoothed_rtt(&hist, rtt_ms);
+            let (raw_score, _) = compute_health_score_with_streak(
+                smoothed_rtt,
+                loss,
+                &xui_status,
+                &shield,
+                xui_fail_streak,
+            );
+            let fast_react = smoothed_rtt.is_none()
+                || xui_fail_streak >= 2
+                || (xui_status.connected && xui_status.xray_state != "running")
+                || shield.ipv6_leak == Some(true);
+            let (score, status) = store.smooth_health_score(&node.id, raw_score, fast_react);
             let persist = store.take_persist_snapshot(false);
-            (hist, j, loss, persist)
+            (hist, j, loss, score, status, persist)
         };
 
         if let Some(buckets) = persist_snap {
@@ -123,10 +138,6 @@ pub async fn poll_once(
                 let _ = storage::save_history_buckets(&buckets);
             });
         }
-
-        let smoothed_rtt = compute_smoothed_rtt(&history_vec, rtt_ms);
-        let (health_score, health_status) =
-            compute_health_score(smoothed_rtt, packet_loss_pct, &xui_status, &shield);
 
         TelemetrySnapshot {
             node_id: node.id.clone(),
@@ -152,6 +163,66 @@ pub async fn poll_once(
         *latest = Some(snapshot.clone());
     }
     state::emit_to_visible_windows(app, "cockpit://telemetry", &snapshot);
+}
+
+pub async fn poll_carriers_once(
+    app: &AppHandle,
+    state: &CockpitState,
+    skip_if_busy: bool,
+) -> Option<CarrierQualitySnapshot> {
+    let _guard = if skip_if_busy {
+        match state.carrier_lock.try_lock() {
+            Ok(g) => g,
+            Err(_) => return state.latest_carrier_quality.read().await.clone(),
+        }
+    } else {
+        state.carrier_lock.lock().await
+    };
+
+    let settings = state.settings.read().await.clone();
+    let active_node = {
+        let nodes = state.nodes.read().await;
+        let active_id = state.active_node_id.read().await;
+        match active_id.as_deref() {
+            Some(id) => nodes.iter().find(|n| n.id == id).cloned(),
+            None => nodes.first().cloned(),
+        }
+    };
+
+    let snapshot = if settings.demo_mode || active_node.is_none() {
+        let tick = *state.demo_tick.read().await;
+        carrier_probe::build_demo_carrier_quality(tick)
+    } else {
+        let node = active_node?;
+        let now_ms = Utc::now().timestamp_millis();
+        match carrier_probe::probe_node_carriers(&node).await {
+            Ok(readings) => {
+                let (snap, persist_map) = {
+                    let mut store = state.carrier_history.write().await;
+                    let snap = store.record_batch(&node.id, now_ms, &readings);
+                    let persist = store.take_persist_snapshot();
+                    (snap, persist)
+                };
+                if let Some(map) = persist_map {
+                    tokio::task::spawn_blocking(move || {
+                        let _ = storage::save_carrier_history(&map);
+                    });
+                }
+                snap
+            }
+            Err(err) => {
+                let store = state.carrier_history.read().await;
+                store.build_snapshot(&node.id, now_ms, Some(err))
+            }
+        }
+    };
+
+    {
+        let mut latest = state.latest_carrier_quality.write().await;
+        *latest = Some(snapshot.clone());
+    }
+    state::emit_to_visible_windows(app, "cockpit://carrier-quality-updated", &snapshot);
+    Some(snapshot)
 }
 
 pub fn spawn_background_loops(app_handle: AppHandle, state: Arc<CockpitState>) {
@@ -193,7 +264,23 @@ pub fn spawn_background_loops(app_handle: AppHandle, state: Arc<CockpitState>) {
         }
     });
 
-    // 3. Adaptive tiered telemetry loop (2s active / 15s collapsed)
+    // 3. Low-frequency zero-agent 3-carrier quality probe (60s visible / 300s hidden)
+    let carrier_app = app_handle.clone();
+    let carrier_state = Arc::clone(&state);
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        loop {
+            poll_carriers_once(&carrier_app, &carrier_state, true).await;
+            let sleep_secs = if state::any_window_visible(&carrier_app) {
+                60
+            } else {
+                300
+            };
+            tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
+        }
+    });
+
+    // 4. Adaptive tiered telemetry loop (2s active / 15s collapsed)
     tauri::async_runtime::spawn(async move {
         poll_once(&app_handle, &state, false, true).await;
         loop {

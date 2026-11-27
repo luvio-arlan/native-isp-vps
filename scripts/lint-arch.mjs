@@ -83,6 +83,7 @@ for (const file of feFiles) {
 // 3. Rust file size, async hot-path hygiene & targeted telemetry emission
 const rsFiles = walk(path.join(ROOT, "app/src-tauri/src"), [".rs"]);
 const hotAsyncFiles = new Set([
+  "app/src-tauri/src/carrier_probe.rs",
   "app/src-tauri/src/local_probe.rs",
   "app/src-tauri/src/mihomo.rs",
   "app/src-tauri/src/poller.rs",
@@ -113,11 +114,11 @@ for (const file of rsFiles) {
       );
     }
 
-    if (/\.emit\(\s*"cockpit:\/\/telemetry"/.test(line)) {
+    if (/\.emit\(\s*"cockpit:\/\/(telemetry|carrier-quality-updated)"/.test(line)) {
       failures.push(
-        `[NO_GLOBAL_TELEMETRY_BROADCAST] ${r}:${idx + 1}: global 'emit("cockpit://telemetry", ...)' detected.\n` +
-          `  Why: Broadcasting high-frequency telemetry wakes hidden WebViews (main/popover) and wastes CPU/battery.\n` +
-          `  Fix: Call 'state::emit_to_visible_windows(app, "cockpit://telemetry", &snapshot)' in app/src-tauri/src/state.rs.`
+        `[NO_GLOBAL_TELEMETRY_BROADCAST] ${r}:${idx + 1}: global telemetry emit detected (${trimmed}).\n` +
+          `  Why: Broadcasting periodic telemetry wakes hidden WebViews (main/popover) and wastes CPU/battery.\n` +
+          `  Fix: Call 'state::emit_to_visible_windows(app, ...)' in app/src-tauri/src/state.rs.`
       );
     }
   });
@@ -167,11 +168,26 @@ if (fs.existsSync(mihomoRulesPath)) {
   });
 }
 
+// 6. Release version parity across package.json, Cargo.toml, and tauri.conf.json
+const pkgVer = JSON.parse(fs.readFileSync(path.join(ROOT, "app/package.json"), "utf8")).version;
+const tauriVer = JSON.parse(
+  fs.readFileSync(path.join(ROOT, "app/src-tauri/tauri.conf.json"), "utf8")
+).version;
+const cargoToml = fs.readFileSync(path.join(ROOT, "app/src-tauri/Cargo.toml"), "utf8");
+const cargoVer = cargoToml.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+if (!(pkgVer && tauriVer && cargoVer && pkgVer === tauriVer && tauriVer === cargoVer)) {
+  failures.push(
+    `[VERSION_PARITY] Version mismatch across manifests: package.json=${pkgVer}, Cargo.toml=${cargoVer}, tauri.conf.json=${tauriVer}.\n` +
+      `  Why: Release tags & Tauri updater rely on identical version numbers across JS/Rust/Tauri configs.\n` +
+      `  Fix: Align 'version' in app/package.json, app/src-tauri/Cargo.toml, and app/src-tauri/tauri.conf.json.`
+  );
+}
+
 if (failures.length > 0) {
   console.error(`lint-arch failed with ${failures.length} violation(s):\n\n${failures.join("\n\n")}`);
   process.exit(1);
 }
 
 console.log(
-  `lint-arch PASS (${feFiles.length} TS/TSX files, ${rsFiles.length} Rust files, IPC parity & Mihomo rules verified, 0 violations)`
+  `lint-arch PASS (${feFiles.length} TS/TSX files, ${rsFiles.length} Rust files, IPC/version parity v${pkgVer} & Mihomo rules verified, 0 violations)`
 );

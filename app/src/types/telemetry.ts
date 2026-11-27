@@ -187,8 +187,31 @@ export interface LeakCheckResult {
   checkedAt: string;
 }
 
+export interface CarrierSample {
+  ts: number;
+  rttMs?: number | null;
+  lossPct: number;
+}
+
+export interface CarrierLineMetrics {
+  key: string;
+  label: string;
+  target: string;
+  latestRttMs?: number | null;
+  lossPct: number;
+  samples: CarrierSample[];
+}
+
+export interface CarrierQualitySnapshot {
+  nodeId: string;
+  updatedAt: number;
+  carriers: CarrierLineMetrics[];
+  error?: string | null;
+}
+
 export interface CachedDiagnostics {
   aiProbes: AiProbeResult[];
   leakResult?: LeakCheckResult | null;
   auditReport?: AuditReport | null;
+  carrierQuality?: CarrierQualitySnapshot | null;
 }

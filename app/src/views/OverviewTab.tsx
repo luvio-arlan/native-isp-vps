@@ -11,9 +11,10 @@ import {
   ShieldCheck,
   Wifi,
 } from "lucide-react";
-import type { NodeConfig, TelemetrySnapshot } from "../types/telemetry";
+import type { CarrierQualitySnapshot, NodeConfig, TelemetrySnapshot } from "../types/telemetry";
 import { SparklineChart } from "../components/SparklineChart";
 import { GaugeRing } from "../components/GaugeRing";
+import { CarrierQualityCard } from "../components/CarrierQualityCard";
 import {
   daysUntilReset,
   forecastCycleUsage,
@@ -26,6 +27,9 @@ import {
 interface OverviewTabProps {
   node: NodeConfig;
   snapshot: TelemetrySnapshot | null;
+  carrierQuality: CarrierQualitySnapshot | null;
+  isProbingCarriers: boolean;
+  onProbeCarriers: () => void;
   onShowQr: (title: string, url: string) => void;
   onToast: (msg: string) => void;
 }
@@ -33,6 +37,9 @@ interface OverviewTabProps {
 export const OverviewTab: React.FC<OverviewTabProps> = ({
   node,
   snapshot,
+  carrierQuality,
+  isProbingCarriers,
+  onProbeCarriers,
   onShowQr,
   onToast,
 }) => {
@@ -318,7 +325,14 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </div>
       </div>
 
-      {/* Row 3: Quick Status Footer Bar */}
+      {/* Row 3: Komari-style 3-Carrier Return Quality */}
+      <CarrierQualityCard
+        quality={carrierQuality}
+        isProbing={isProbingCarriers}
+        onProbe={onProbeCarriers}
+      />
+
+      {/* Row 4: Quick Status Footer Bar */}
       <div className="glass-card flex flex-wrap items-center justify-between gap-3 rounded-2xl px-5 py-3.5 text-[12px]">
         <div className="flex flex-wrap items-center gap-5">
           <div className="flex items-center gap-2">

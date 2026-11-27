@@ -8,13 +8,14 @@ pub const MAX_24H_BUCKETS: usize = 1440;
 const BUCKET_MS: i64 = 60_000;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Returns a smoothed RTT (median of the latest up to 3 valid samples) so single-packet spikes
-/// do not cause erratic health score jumps. Reports `None` only when the link has no recent reply.
+/// Returns a smoothed RTT (median of the latest up to 7 valid samples, ~14s in active mode)
+/// so isolated spikes never cause erratic health score jumps. Reports `None` immediately when
+/// two consecutive probes time out so real disconnects are never masked.
 pub fn compute_smoothed_rtt(history: &[TelemetryPoint], latest: Option<f64>) -> Option<f64> {
     let mut recent: Vec<f64> = history
         .iter()
         .rev()
-        .take(3)
+        .take(7)
         .filter_map(|p| p.rtt_ms)
         .collect();
     if recent.is_empty() {
@@ -30,43 +31,81 @@ pub fn compute_smoothed_rtt(history: &[TelemetryPoint], latest: Option<f64>) -> 
     Some(recent[recent.len() / 2])
 }
 
+pub fn health_status_for_score(score: u32) -> String {
+    if score >= 85 {
+        "optimal".to_string()
+    } else if score >= 60 {
+        "degraded".to_string()
+    } else {
+        "critical".to_string()
+    }
+}
+
+#[cfg(test)]
 pub fn compute_health_score(
     rtt_ms: Option<f64>,
     loss_pct: f64,
     xui: &XuiStatus,
     shield: &LocalShieldStatus,
 ) -> (u32, String) {
+    let fail_streak = if xui.connected { 0 } else { 2 };
+    compute_health_score_with_streak(rtt_ms, loss_pct, xui, shield, fail_streak)
+}
+
+pub fn compute_health_score_with_streak(
+    rtt_ms: Option<f64>,
+    loss_pct: f64,
+    xui: &XuiStatus,
+    shield: &LocalShieldStatus,
+    xui_fail_streak: u32,
+) -> (u32, String) {
     let mut score: i32 = 100;
 
-    // Smooth piecewise RTT penalty (no abrupt step cliffs around 200ms/280ms)
+    // Smooth piecewise RTT penalty calibrated for cross-Pacific Native ISP routes
+    // (<=200ms ideal, 200-320ms gentle -0..-8, 320-500ms elevated -8..-22, >500ms capped at -30)
     if rtt_ms.is_none() {
         score -= 40;
     } else if let Some(r) = rtt_ms {
-        if r > 360.0 {
-            let extra = (((r - 360.0) / 120.0) * 10.0).min(12.0).round() as i32;
-            score -= 16 + extra;
-        } else if r > 180.0 {
-            let penalty = (((r - 180.0) / 180.0) * 16.0).round() as i32;
+        if r > 500.0 {
+            let extra = (((r - 500.0) / 150.0) * 8.0).min(8.0).round() as i32;
+            score -= 22 + extra;
+        } else if r > 320.0 {
+            let extra = (((r - 320.0) / 180.0) * 14.0).round() as i32;
+            score -= 8 + extra;
+        } else if r > 200.0 {
+            let penalty = (((r - 200.0) / 120.0) * 8.0).round() as i32;
             score -= penalty;
         }
     }
-    if loss_pct > 5.0 {
-        score -= 20;
-    } else if loss_pct > 0.0 {
-        score -= (loss_pct * 2.0).ceil().clamp(2.0, 10.0) as i32;
+
+    // Smooth linear packet-loss penalty (eliminates abrupt -10 -> -20 cliff at 5%)
+    if loss_pct > 0.0 {
+        score -= (loss_pct * 2.0).round().clamp(1.0, 25.0) as i32;
     }
 
     if !xui.connected {
-        score -= 18;
+        // Single transient panel hiccup deducts -4; confirmed 2+ consecutive failures deduct -18
+        score -= if xui_fail_streak >= 2 { 18 } else { 4 };
     } else {
         if xui.xray_state != "running" {
             score -= 25;
         }
-        if xui.cpu_percent > 85.0 {
-            score -= 10;
+        // Smooth CPU ramp (75%..95% -> 0..-10) instead of a 10-point cliff at 85%
+        if xui.cpu_percent > 75.0 {
+            let cpu_pen = (((xui.cpu_percent - 75.0) / 20.0) * 10.0)
+                .clamp(0.0, 10.0)
+                .round() as i32;
+            score -= cpu_pen;
         }
-        if xui.mem_total > 0 && (xui.mem_used as f64 / xui.mem_total as f64) > 0.90 {
-            score -= 10;
+        // Smooth RAM ramp (82%..96% -> 0..-10) instead of a 10-point cliff at 90%
+        if xui.mem_total > 0 {
+            let mem_ratio = xui.mem_used as f64 / xui.mem_total as f64;
+            if mem_ratio > 0.82 {
+                let mem_pen = (((mem_ratio - 0.82) / 0.14) * 10.0)
+                    .clamp(0.0, 10.0)
+                    .round() as i32;
+                score -= mem_pen;
+            }
         }
     }
 
@@ -78,14 +117,7 @@ pub fn compute_health_score(
     }
 
     let clamped = score.clamp(0, 100) as u32;
-    let status = if clamped >= 85 {
-        "optimal"
-    } else if clamped >= 60 {
-        "degraded"
-    } else {
-        "critical"
-    };
-    (clamped, status.to_string())
+    (clamped, health_status_for_score(clamped))
 }
 
 pub fn compute_rtt_metrics(history: &VecDeque<TelemetryPoint>) -> (f64, f64) {
@@ -175,6 +207,10 @@ pub struct HistoryStore {
     fine: HashMap<String, VecDeque<TelemetryPoint>>,
     buckets: HashMap<String, VecDeque<HistoryBucket>>,
     accumulators: HashMap<String, MinuteAccumulator>,
+    /// Per-node `(ewma_score, displayed_score)` for jitter-free health gauge display.
+    score_state: HashMap<String, (f64, u32)>,
+    /// Per-node consecutive 3x-ui poll failures so 1-tick panel hiccups don't plunge health.
+    xui_fail_streak: HashMap<String, u32>,
     dirty: bool,
     last_flush: Instant,
 }
@@ -185,6 +221,8 @@ impl HistoryStore {
             fine: HashMap::new(),
             buckets: storage::load_history_buckets(),
             accumulators: HashMap::new(),
+            score_state: HashMap::new(),
+            xui_fail_streak: HashMap::new(),
             dirty: false,
             last_flush: Instant::now(),
         }
@@ -196,6 +234,8 @@ impl HistoryStore {
             fine: HashMap::new(),
             buckets: HashMap::new(),
             accumulators: HashMap::new(),
+            score_state: HashMap::new(),
+            xui_fail_streak: HashMap::new(),
             dirty: false,
             last_flush: Instant::now(),
         }
@@ -258,9 +298,52 @@ impl HistoryStore {
         out
     }
 
+    pub fn record_xui_connectivity(&mut self, node_id: &str, connected: bool) -> u32 {
+        if connected {
+            self.xui_fail_streak.insert(node_id.to_string(), 0);
+            0
+        } else {
+            let entry = self
+                .xui_fail_streak
+                .entry(node_id.to_string())
+                .or_insert(0);
+            *entry = entry.saturating_add(1);
+            *entry
+        }
+    }
+
+    /// Applies EWMA + hysteresis deadband to raw health scores so healthy links never bounce
+    /// between 80s and 90s on normal cross-Pacific variance, while critical outages react fast.
+    pub fn smooth_health_score(
+        &mut self,
+        node_id: &str,
+        raw_score: u32,
+        fast_react: bool,
+    ) -> (u32, String) {
+        let clamped_raw = raw_score.min(100);
+        let displayed = match self.score_state.get_mut(node_id) {
+            None => {
+                self.score_state
+                    .insert(node_id.to_string(), (clamped_raw as f64, clamped_raw));
+                clamped_raw
+            }
+            Some((ema, shown)) => {
+                let alpha = if fast_react { 0.65 } else { 0.25 };
+                *ema += alpha * (clamped_raw as f64 - *ema);
+                if fast_react || (*ema - *shown as f64).abs() >= 0.75 {
+                    *shown = ema.round().clamp(0.0, 100.0) as u32;
+                }
+                *shown
+            }
+        };
+        (displayed, health_status_for_score(displayed))
+    }
+
     pub fn remove_node(&mut self, node_id: &str) {
         self.fine.remove(node_id);
         self.accumulators.remove(node_id);
+        self.score_state.remove(node_id);
+        self.xui_fail_streak.remove(node_id);
         if self.buckets.remove(node_id).is_some() {
             self.dirty = true;
         }
@@ -371,5 +454,68 @@ mod tests {
         assert_eq!(buckets[0].p95_rtt_ms, Some(140.0));
         assert_eq!(buckets[0].loss_pct, 25.0);
         assert_eq!(buckets[1].avg_rtt_ms, Some(150.0));
+    }
+
+    #[test]
+    fn health_score_stays_steady_under_cross_pacific_jitter_and_1tick_xui_hiccup() {
+        let mut store = HistoryStore::empty();
+        let healthy_xui = XuiStatus {
+            connected: true,
+            xray_state: "running".into(),
+            cpu_percent: 12.0,
+            mem_used: 350,
+            mem_total: 1000,
+            ..Default::default()
+        };
+        let offline_xui = XuiStatus {
+            connected: false,
+            xray_state: "unknown".into(),
+            ..Default::default()
+        };
+        let shield = LocalShieldStatus {
+            mihomo_connected: true,
+            quic_blocked: Some(true),
+            ipv6_leak: Some(false),
+            ..Default::default()
+        };
+
+        // Realistic US residential ISP RTT series with periodic spikes (213ms baseline, 338ms spike)
+        let samples = [
+            213.0, 224.0, 236.0, 306.0, 232.0, 218.0, 338.0, 226.0, 215.0, 295.0, 220.0,
+        ];
+        let mut scores = Vec::new();
+        for (idx, rtt) in samples.into_iter().enumerate() {
+            let (hist, _j, loss) = store.record_real(
+                "n1",
+                TelemetryPoint {
+                    ts: 1_000_000 + (idx as i64) * 2000,
+                    rtt_ms: Some(rtt),
+                    vps_down_bps: 100_000,
+                    vps_up_bps: 20_000,
+                    local_down_bps: 90_000,
+                    local_up_bps: 15_000,
+                },
+            );
+            // Inject a 1-tick transient 3x-ui hiccup on tick 5
+            let xui = if idx == 5 { &offline_xui } else { &healthy_xui };
+            let streak = store.record_xui_connectivity("n1", xui.connected);
+            let smoothed_rtt = compute_smoothed_rtt(&hist, Some(rtt));
+            let (raw, _) = compute_health_score_with_streak(smoothed_rtt, loss, xui, &shield, streak);
+            let (score, _) = store.smooth_health_score("n1", raw, false);
+            scores.push(score);
+        }
+
+        let min_s = *scores.iter().min().unwrap();
+        let max_s = *scores.iter().max().unwrap();
+        assert!(
+            min_s >= 94,
+            "healthy cross-Pacific node should stay in mid/high 90s, got {:?}",
+            scores
+        );
+        assert!(
+            max_s - min_s <= 4,
+            "score spread should stay tight (<=4 pts), got {:?}",
+            scores
+        );
     }
 }

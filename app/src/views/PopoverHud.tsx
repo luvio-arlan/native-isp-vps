@@ -21,46 +21,68 @@ import {
   formatSpeedInline,
 } from "../lib/format";
 
+type PopoverMotionPhase = "idle" | "open" | "closing";
+
+interface PopoverVisibilityPayload {
+  open: boolean;
+  anchorX?: number;
+}
+
 export const PopoverHud: React.FC = () => {
   const { activeNode, snapshot, isDemo, isProbing, runFullProbe } = useTelemetry();
   const [channel, setChannel] = useState<"local" | "vps">("local");
   const [copied, setCopied] = useState(false);
-  const [visible, setVisible] = useState(false);
+  const [motionPhase, setMotionPhase] = useState<PopoverMotionPhase>("idle");
+  const [anchorX, setAnchorX] = useState(50);
 
   useEffect(() => {
     let active = true;
-    let raf1: number | null = null;
-    let raf2: number | null = null;
+    let rafId: number | null = null;
 
-    const scheduleEnter = () => {
-      if (raf1 !== null) window.cancelAnimationFrame(raf1);
-      if (raf2 !== null) window.cancelAnimationFrame(raf2);
-      raf1 = window.requestAnimationFrame(() => {
-        raf2 = window.requestAnimationFrame(() => {
-          if (active) setVisible(true);
-        });
+    const cancelPendingFrames = () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    };
+
+    const scheduleEnter = (nextAnchorX?: number) => {
+      cancelPendingFrames();
+      if (typeof nextAnchorX === "number" && Number.isFinite(nextAnchorX)) {
+        setAnchorX(nextAnchorX);
+      }
+      setMotionPhase("idle");
+      rafId = window.requestAnimationFrame(() => {
+        if (active) setMotionPhase("open");
       });
     };
 
+    const triggerExit = (nextAnchorX?: number) => {
+      cancelPendingFrames();
+      if (typeof nextAnchorX === "number" && Number.isFinite(nextAnchorX)) {
+        setAnchorX(nextAnchorX);
+      }
+      setMotionPhase((prev) => (prev === "idle" ? "idle" : "closing"));
+    };
+
     if (!isTauriRuntime()) {
-      scheduleEnter();
+      scheduleEnter(50);
       return () => {
         active = false;
-        if (raf1 !== null) window.cancelAnimationFrame(raf1);
-        if (raf2 !== null) window.cancelAnimationFrame(raf2);
+        cancelPendingFrames();
       };
     }
 
     let unlisten: (() => void) | null = null;
 
-    subscribeEvent<boolean>("cockpit://popover-visibility", (open) => {
+    subscribeEvent<PopoverVisibilityPayload | boolean>("cockpit://popover-visibility", (payload) => {
       if (!active) return;
+      const open = typeof payload === "boolean" ? payload : payload.open;
+      const nextAnchor = typeof payload === "boolean" ? undefined : payload.anchorX;
       if (open) {
-        scheduleEnter();
+        scheduleEnter(nextAnchor);
       } else {
-        if (raf1 !== null) window.cancelAnimationFrame(raf1);
-        if (raf2 !== null) window.cancelAnimationFrame(raf2);
-        setVisible(false);
+        triggerExit(nextAnchor);
       }
     }).then((fn) => {
       if (active) unlisten = fn;
@@ -76,7 +98,7 @@ export const PopoverHud: React.FC = () => {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setVisible(false);
+        triggerExit();
         api.hidePopover().catch(() => {});
       }
     };
@@ -84,8 +106,7 @@ export const PopoverHud: React.FC = () => {
 
     return () => {
       active = false;
-      if (raf1 !== null) window.cancelAnimationFrame(raf1);
-      if (raf2 !== null) window.cancelAnimationFrame(raf2);
+      cancelPendingFrames();
       window.removeEventListener("keydown", onKeyDown);
       unlisten?.();
     };
@@ -139,9 +160,10 @@ export const PopoverHud: React.FC = () => {
   };
 
   return (
-    <div className="h-screen w-screen bg-transparent px-5 pt-2 pb-7">
+    <div className="h-screen w-screen bg-transparent px-5 pt-2.5 pb-7">
       <div
-        data-state={visible ? "open" : "closed"}
+        data-state={motionPhase}
+        style={{ transformOrigin: `${anchorX.toFixed(1)}% 0%` }}
         className="popover-shell popover-motion flex h-full w-full flex-col justify-between rounded-2xl p-3.5 text-zinc-100"
       >
         {/* Top Node Header */}

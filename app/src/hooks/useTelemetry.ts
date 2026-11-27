@@ -4,6 +4,7 @@ import type {
   AiProbeResult,
   AppSettings,
   AuditReport,
+  CarrierQualitySnapshot,
   HandoffPayload,
   HistoryBucket,
   LeakCheckResult,
@@ -170,7 +171,51 @@ function buildBrowserPreviewData() {
     error: null,
   };
 
-  return { snapshot, probes, audit, history24h };
+  const carrierQuality: CarrierQualitySnapshot = {
+    nodeId: "demo-la",
+    updatedAt: now,
+    error: null,
+    carriers: [
+      {
+        key: "ct",
+        label: "电信",
+        target: "202.96.209.133",
+        latestRttMs: 127,
+        lossPct: 0.0,
+        samples: Array.from({ length: 24 }, (_, i) => ({
+          ts: now - (23 - i) * 60_000,
+          rttMs: Math.round(126 + Math.sin(i * 0.5) * 4),
+          lossPct: 0,
+        })),
+      },
+      {
+        key: "cu",
+        label: "联通",
+        target: "119.6.6.6",
+        latestRttMs: 135,
+        lossPct: 0.0,
+        samples: Array.from({ length: 24 }, (_, i) => ({
+          ts: now - (23 - i) * 60_000,
+          rttMs: Math.round(134 + Math.cos(i * 0.45) * 3),
+          lossPct: 0,
+        })),
+      },
+      {
+        key: "cm",
+        label: "移动",
+        target: "211.136.112.50",
+        latestRttMs: 130,
+        lossPct: 1.4,
+        samples: Array.from({ length: 24 }, (_, i) => ({
+          ts: now - (23 - i) * 60_000,
+          rttMs: Math.round(130 + Math.sin(i * 0.6) * 5),
+          lossPct: i === 1 ? 33.3 : 0,
+        })),
+      },
+    ],
+  };
+
+  return { snapshot, probes, audit, history24h, carrierQuality };
 }
 
 export function useTelemetry() {
@@ -181,8 +226,10 @@ export function useTelemetry() {
   const [aiProbes, setAiProbes] = useState<AiProbeResult[]>([]);
   const [leakResult, setLeakResult] = useState<LeakCheckResult | null>(null);
   const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
+  const [carrierQuality, setCarrierQuality] = useState<CarrierQualitySnapshot | null>(null);
   const [history24h, setHistory24h] = useState<HistoryBucket[]>([]);
   const [isProbing, setIsProbing] = useState(false);
+  const [isProbingCarriers, setIsProbingCarriers] = useState(false);
   const [isAuditing, setIsAuditing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -208,6 +255,7 @@ export function useTelemetry() {
       setSnapshot(preview.snapshot);
       setAiProbes(preview.probes);
       setAuditReport(preview.audit);
+      setCarrierQuality(preview.carrierQuality);
       setHistory24h(preview.history24h);
       setLeakResult({
         exitIpv4: "38.55.142.88",
@@ -240,6 +288,7 @@ export function useTelemetry() {
       if (diag.aiProbes.length > 0) setAiProbes(diag.aiProbes);
       if (diag.leakResult) setLeakResult(diag.leakResult);
       if (diag.auditReport) setAuditReport(diag.auditReport);
+      if (diag.carrierQuality) setCarrierQuality(diag.carrierQuality);
       if (snap) {
         setSnapshot(snap);
       } else {
@@ -305,6 +354,11 @@ export function useTelemetry() {
     register(
       subscribeEvent<AuditReport>("cockpit://audit-updated", (report) => {
         setAuditReport(report);
+      })
+    );
+    register(
+      subscribeEvent<CarrierQualitySnapshot>("cockpit://carrier-quality-updated", (quality) => {
+        setCarrierQuality(quality);
       })
     );
 
@@ -381,6 +435,20 @@ export function useTelemetry() {
     }
   }, [showToast]);
 
+  const runCarrierProbe = useCallback(async () => {
+    if (!isTauriRuntime()) return;
+    setIsProbingCarriers(true);
+    try {
+      const result = await api.probeCarrierQuality();
+      if (result) setCarrierQuality(result);
+      showToast(result?.error ? "三网探测遇到异常，请查看提示" : "三网回程延迟与丢包采样已更新");
+    } catch {
+      showToast("三网探测调用失败");
+    } finally {
+      setIsProbingCarriers(false);
+    }
+  }, [showToast]);
+
   const runAudit = useCallback(async () => {
     if (!isTauriRuntime()) return;
     setIsAuditing(true);
@@ -437,8 +505,10 @@ export function useTelemetry() {
     aiProbes,
     leakResult,
     auditReport,
+    carrierQuality,
     history24h,
     isProbing,
+    isProbingCarriers,
     isAuditing,
     toast,
     showToast,
@@ -447,6 +517,7 @@ export function useTelemetry() {
     removeNode,
     loadHistory24h,
     runFullProbe,
+    runCarrierProbe,
     runAudit,
     saveSettings,
     refreshNow: async () => {

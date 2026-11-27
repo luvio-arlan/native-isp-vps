@@ -77,8 +77,10 @@ export const CockpitApp: React.FC = () => {
     aiProbes,
     leakResult,
     auditReport,
+    carrierQuality,
     history24h,
     isProbing,
+    isProbingCarriers,
     isAuditing,
     toast,
     showToast,
@@ -87,6 +89,7 @@ export const CockpitApp: React.FC = () => {
     removeNode,
     loadHistory24h,
     runFullProbe,
+    runCarrierProbe,
     runAudit,
     saveSettings,
   } = useTelemetry();
@@ -110,7 +113,7 @@ export const CockpitApp: React.FC = () => {
           className="titlebar-drag flex h-12 items-center justify-end px-4 pt-2"
         >
           <span className="pointer-events-none rounded-md border border-white/8 bg-white/[0.04] px-2 py-0.5 font-mono-num text-[10px] tracking-wider text-zinc-400">
-            v{updater.releaseInfo?.currentVersion ?? "0.1.1"}
+            v{updater.releaseInfo?.currentVersion ?? "0.1.2"}
           </span>
         </div>
 
@@ -236,7 +239,7 @@ export const CockpitApp: React.FC = () => {
       </aside>
 
       {/* Main Telemetry Workspace */}
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="relative flex min-w-0 flex-1 flex-col">
         {/* Top Draggable Header Bar */}
         <header
           data-tauri-drag-region
@@ -303,6 +306,9 @@ export const CockpitApp: React.FC = () => {
             <OverviewTab
               node={activeNode}
               snapshot={snapshot}
+              carrierQuality={carrierQuality}
+              isProbingCarriers={isProbingCarriers}
+              onProbeCarriers={runCarrierProbe}
               onShowQr={(title, url) => setQrState({ title, url })}
               onToast={showToast}
             />
@@ -314,8 +320,11 @@ export const CockpitApp: React.FC = () => {
               history24h={history24h}
               aiProbes={aiProbes}
               leakResult={leakResult}
+              carrierQuality={carrierQuality}
               isProbing={isProbing}
+              isProbingCarriers={isProbingCarriers}
               onRunProbe={runFullProbe}
+              onProbeCarriers={runCarrierProbe}
               onLoadHistory24h={loadHistory24h}
             />
           )}
@@ -352,6 +361,18 @@ export const CockpitApp: React.FC = () => {
             />
           )}
         </div>
+        {/* Centered Workspace Toast Notification */}
+        {toastPresence.mounted && (
+          <div className="pointer-events-none absolute inset-x-0 top-[68px] z-40 flex justify-center px-6">
+            <div
+              data-state={toastPresence.phase === "entered" ? "open" : "closed"}
+              className="toast-motion inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-[#0d121a]/95 px-4 py-2 text-[12px] font-medium text-emerald-200 shadow-2xl backdrop-blur-md"
+            >
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+              <span>{toast ?? cachedToast}</span>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Modals */}
@@ -387,16 +408,6 @@ export const CockpitApp: React.FC = () => {
         }}
         onClose={() => setPendingDeleteNode(null)}
       />
-
-      {/* Toast Notification */}
-      {toastPresence.mounted && (
-        <div
-          data-state={toastPresence.phase === "entered" ? "open" : "closed"}
-          className="toast-motion fixed bottom-5 right-5 z-50 rounded-xl border border-emerald-500/30 bg-[#0d121a]/95 px-4 py-2.5 text-[12px] font-medium text-emerald-200 shadow-2xl backdrop-blur-md"
-        >
-          {toast ?? cachedToast}
-        </div>
-      )}
     </div>
   );
 };

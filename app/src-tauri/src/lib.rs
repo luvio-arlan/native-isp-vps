@@ -1,3 +1,4 @@
+mod carrier_probe;
 mod commands;
 mod demo;
 mod inbox;
@@ -45,6 +46,7 @@ pub fn run() {
             commands::get_history_24h,
             commands::trigger_refresh,
             commands::probe_ai_endpoints_cmd,
+            commands::probe_carrier_quality_cmd,
             commands::run_leak_check_cmd,
             commands::run_ssh_audit_cmd,
             commands::get_settings,
@@ -65,6 +67,11 @@ pub fn run() {
                 if let Ok(mut hist) = event_state.history.try_write() {
                     if let Some(buckets) = hist.take_persist_snapshot(true) {
                         let _ = storage::save_history_buckets(&buckets);
+                    }
+                }
+                if let Ok(mut carrier_hist) = event_state.carrier_history.try_write() {
+                    if let Some(map) = carrier_hist.take_persist_snapshot() {
+                        let _ = storage::save_carrier_history(&map);
                     }
                 }
             }

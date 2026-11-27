@@ -1,12 +1,13 @@
 use crate::demo;
 use crate::local_probe;
 use crate::models::{
-    AiProbeResult, AppSettings, AuditReport, CachedDiagnostics, GitHubReleaseInfo, HandoffPayload,
-    HistoryBucket, LeakCheckResult, NodeConfig, TelemetrySnapshot,
+    AiProbeResult, AppSettings, AuditReport, CachedDiagnostics, CarrierQualitySnapshot,
+    GitHubReleaseInfo, HandoffPayload, HistoryBucket, LeakCheckResult, NodeConfig,
+    TelemetrySnapshot,
 };
 use crate::poller;
 use crate::ssh_audit;
-use crate::state::CockpitState;
+use crate::state::{self, CockpitState};
 use crate::storage;
 use crate::tray;
 use crate::updater;
@@ -46,11 +47,27 @@ pub async fn set_active_node(
             None
         }
     };
+    let cached_carrier = {
+        let store = state.carrier_history.read().await;
+        store.get_cached_snapshot(&node_id)
+    };
+    {
+        let mut latest = state.latest_carrier_quality.write().await;
+        *latest = cached_carrier.clone();
+    }
+    if let Some(snap) = cached_carrier {
+        state::emit_to_visible_windows(&app, "cockpit://carrier-quality-updated", &snap);
+    }
     let _ = app.emit("cockpit://active-node-updated", Some(node_id));
     if let Some(cfg) = updated_cfg {
         let _ = app.emit("cockpit://settings-updated", &cfg);
     }
     poller::poll_once(&app, &state, false, true).await;
+    let bg_app = app.clone();
+    let bg_state = Arc::clone(&state);
+    tauri::async_runtime::spawn(async move {
+        let _ = poller::poll_carriers_once(&bg_app, &bg_state, true).await;
+    });
     Ok(())
 }
 
@@ -97,6 +114,15 @@ pub async fn delete_node(
         if let Some(buckets) = hist.take_persist_snapshot(true) {
             tokio::task::spawn_blocking(move || {
                 let _ = storage::save_history_buckets(&buckets);
+            });
+        }
+    }
+    {
+        let mut carrier_hist = state.carrier_history.write().await;
+        carrier_hist.remove_node(&node_id);
+        if let Some(map) = carrier_hist.take_persist_snapshot() {
+            tokio::task::spawn_blocking(move || {
+                let _ = storage::save_carrier_history(&map);
             });
         }
     }
@@ -233,6 +259,14 @@ pub async fn run_ssh_audit_cmd(
     }
     let _ = app.emit("cockpit://audit-updated", &report);
     Ok(report)
+}
+
+#[tauri::command]
+pub async fn probe_carrier_quality_cmd(
+    app: AppHandle,
+    state: State<'_, Arc<CockpitState>>,
+) -> Result<Option<CarrierQualitySnapshot>, String> {
+    Ok(poller::poll_carriers_once(&app, &state, false).await)
 }
 
 #[tauri::command]

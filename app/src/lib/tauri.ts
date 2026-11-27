@@ -5,6 +5,7 @@ import type {
   AppSettings,
   AuditReport,
   CachedDiagnostics,
+  CarrierQualitySnapshot,
   GitHubReleaseInfo,
   HandoffPayload,
   HistoryBucket,
@@ -28,6 +29,8 @@ export const api = {
     invoke("get_history_24h", { nodeId: nodeId ?? null }),
   triggerRefresh: (): Promise<TelemetrySnapshot | null> => invoke("trigger_refresh"),
   probeAiEndpoints: (): Promise<AiProbeResult[]> => invoke("probe_ai_endpoints_cmd"),
+  probeCarrierQuality: (): Promise<CarrierQualitySnapshot | null> =>
+    invoke("probe_carrier_quality_cmd"),
   runLeakCheck: (): Promise<LeakCheckResult> => invoke("run_leak_check_cmd"),
   runSshAudit: (nodeId?: string): Promise<AuditReport> =>
     invoke("run_ssh_audit_cmd", { nodeId: nodeId ?? null }),

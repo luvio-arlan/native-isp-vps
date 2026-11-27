@@ -2,12 +2,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Activity, CheckCircle2, Globe2, ShieldAlert, ShieldCheck, XCircle, Zap } from "lucide-react";
 import type {
   AiProbeResult,
+  CarrierQualitySnapshot,
   HistoryBucket,
   LeakCheckResult,
   NodeConfig,
   TelemetrySnapshot,
 } from "../types/telemetry";
 import { SparklineChart } from "../components/SparklineChart";
+import { CarrierQualityCard } from "../components/CarrierQualityCard";
 
 interface NetworkTabProps {
   node: NodeConfig;
@@ -15,8 +17,11 @@ interface NetworkTabProps {
   history24h: HistoryBucket[];
   aiProbes: AiProbeResult[];
   leakResult: LeakCheckResult | null;
+  carrierQuality: CarrierQualitySnapshot | null;
   isProbing: boolean;
+  isProbingCarriers: boolean;
   onRunProbe: () => void;
+  onProbeCarriers: () => void;
   onLoadHistory24h: () => void;
 }
 
@@ -31,8 +36,11 @@ export const NetworkTab: React.FC<NetworkTabProps> = React.memo(({
   history24h,
   aiProbes,
   leakResult,
+  carrierQuality,
   isProbing,
+  isProbingCarriers,
   onRunProbe,
+  onProbeCarriers,
   onLoadHistory24h,
 }) => {
   const [windowRange, setWindowRange] = useState<"2m" | "24h">("2m");
@@ -163,6 +171,13 @@ export const NetworkTab: React.FC<NetworkTabProps> = React.memo(({
           />
         </div>
       </div>
+
+      {/* 3-Carrier Return Latency & Loss Matrix */}
+      <CarrierQualityCard
+        quality={carrierQuality}
+        isProbing={isProbingCarriers}
+        onProbe={onProbeCarriers}
+      />
 
       {/* AI Matrix + Leak Check */}
       <div className="grid grid-cols-12 gap-4">

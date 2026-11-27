@@ -1,4 +1,6 @@
-use crate::models::{AppSettings, HandoffPayload, HistoryBucket, NodeConfig, NodeSecrets};
+use crate::models::{
+    AppSettings, CarrierSample, HandoffPayload, HistoryBucket, NodeConfig, NodeSecrets,
+};
 use chrono::Utc;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -41,6 +43,10 @@ fn history_file() -> PathBuf {
     config_dir().join("history.json")
 }
 
+fn carrier_history_file() -> PathBuf {
+    config_dir().join("carrier_history.json")
+}
+
 pub fn load_history_buckets() -> HashMap<String, VecDeque<HistoryBucket>> {
     let path = history_file();
     if !path.exists() {
@@ -56,6 +62,25 @@ pub fn save_history_buckets(map: &HashMap<String, VecDeque<HistoryBucket>>) -> R
     ensure_dirs()?;
     let json = serde_json::to_string(map).map_err(|e| e.to_string())?;
     write_atomic_file(&history_file(), json.as_bytes(), true)
+}
+
+pub type PersistedCarrierMap = HashMap<String, HashMap<String, VecDeque<CarrierSample>>>;
+
+pub fn load_carrier_history() -> PersistedCarrierMap {
+    let path = carrier_history_file();
+    if !path.exists() {
+        return HashMap::new();
+    }
+    match fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    }
+}
+
+pub fn save_carrier_history(map: &PersistedCarrierMap) -> Result<(), String> {
+    ensure_dirs()?;
+    let json = serde_json::to_string(map).map_err(|e| e.to_string())?;
+    write_atomic_file(&carrier_history_file(), json.as_bytes(), true)
 }
 
 pub fn ensure_dirs() -> Result<(), String> {

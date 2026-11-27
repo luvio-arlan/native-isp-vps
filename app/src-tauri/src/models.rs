@@ -272,10 +272,39 @@ pub struct LeakCheckResult {
     pub checked_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CarrierSample {
+    pub ts: i64,
+    pub rtt_ms: Option<f64>,
+    pub loss_pct: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CarrierLineMetrics {
+    pub key: String,
+    pub label: String,
+    pub target: String,
+    pub latest_rtt_ms: Option<f64>,
+    pub loss_pct: f64,
+    pub samples: Vec<CarrierSample>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CarrierQualitySnapshot {
+    pub node_id: String,
+    pub updated_at: i64,
+    pub carriers: Vec<CarrierLineMetrics>,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CachedDiagnostics {
     pub ai_probes: Vec<AiProbeResult>,
     pub leak_result: Option<LeakCheckResult>,
     pub audit_report: Option<AuditReport>,
+    pub carrier_quality: Option<CarrierQualitySnapshot>,
 }

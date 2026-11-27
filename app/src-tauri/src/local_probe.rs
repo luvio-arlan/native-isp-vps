@@ -6,9 +6,11 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 
-const RTT_STRATEGY_TTL: Duration = Duration::from_secs(60);
+const RTT_STRATEGY_TTL: Duration = Duration::from_secs(300);
 
 static RTT_PREFER_HEAD: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+/// Tracks `(last_probe_instant, running_baseline_ms)` per panel URL so cold TLS handshakes
+/// or brief server-side contention spikes never ratchet up the baseline threshold.
 static LAST_HEAD_PROBE: OnceLock<Mutex<HashMap<String, (Instant, f64)>>> = OnceLock::new();
 static RTT_HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
 static AI_PROBE_CLIENT: OnceLock<Client> = OnceLock::new();
@@ -102,14 +104,14 @@ async fn probe_panel_head_rtt(trimmed_panel: &str) -> Option<f64> {
     }
     let first_ms = (start.elapsed().as_secs_f64() * 1000.0 * 10.0).round() / 10.0;
 
-    // After idle intervals (>=10s) or cold reconnect spikes, the first HEAD pays TCP+TLS
-    // handshake overhead (2-3x real RTT). Fire one immediate keep-alive follow-up HEAD so
-    // background polls never pollute jitter or trigger false score drops on open.
+    // After idle intervals (>=8s), on initial cold connect, or when a single probe jumps
+    // >=20% & >=25ms above the running baseline (e.g. server closed keep-alive or 3x-ui
+    // panel contention), fire one immediate keep-alive follow-up HEAD and keep the faster RTT.
     let likely_cold = match prev {
-        None => first_ms > 220.0,
-        Some((last_at, prev_ms)) => {
-            last_at.elapsed() >= Duration::from_secs(10)
-                || (first_ms > 240.0 && first_ms > prev_ms * 1.35)
+        None => first_ms > 150.0,
+        Some((last_at, baseline_ms)) => {
+            last_at.elapsed() >= Duration::from_secs(8)
+                || (first_ms > baseline_ms * 1.20 && (first_ms - baseline_ms) >= 25.0)
         }
     };
 
@@ -125,11 +127,23 @@ async fn probe_panel_head_rtt(trimmed_panel: &str) -> Option<f64> {
         first_ms
     };
 
+    let next_baseline = match prev {
+        None => measured,
+        Some((_, prev_base)) => {
+            // Pull baseline down faster than up so occasional congestion cannot ratchet it upward
+            if measured < prev_base {
+                prev_base * 0.55 + measured * 0.45
+            } else {
+                prev_base * 0.85 + measured * 0.15
+            }
+        }
+    };
+
     if let Ok(mut m) = LAST_HEAD_PROBE
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
     {
-        m.insert(trimmed_panel.to_string(), (Instant::now(), measured));
+        m.insert(trimmed_panel.to_string(), (Instant::now(), next_baseline));
     }
 
     Some(measured)
