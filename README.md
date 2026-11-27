@@ -83,7 +83,7 @@
 ### 本地领航看板（`app/` · Tauri v2 + Rust + React 19）
 - **零额外 VPS 守护进程**：不向 1GB VPS 注入任何额外探针进程或新端口——复用 **3x-ui 原生 API**（Bearer Token 优先 + Cookie 登录兜底）与 **本机 Mihomo Unix Socket**，后台收起自动降频（`2s → 15s`）极度省资源。
 - **本地 0600 安全边界**：API Token 与面板密码仅以 `0600` 权限原子写入 `~/.config/native-isp-vps/secrets.json` 并走进程内内存缓存（零 Keychain 授权弹窗、绝不进 Git），交接临时文件在 1 秒内覆零粉碎。
-- **多用户配额与手机扫码**：可视化展示 `Me` / `GF` 等成员配额与 30 天周期消耗预测，一键复制万能订阅或即时生成二维码供 iPhone Shadowrocket / Android FlClash 扫码导入。
+- **共享 / 多成员配额与手机扫码**：默认单订阅全员共享月流量（亦支持按需拆分多成员独立额度），实时展示 30 天周期消耗预测，一键复制万能订阅或即时生成二维码供 iPhone Shadowrocket / Android FlClash 扫码导入。
 - **GitHub Releases 自动热更新**：内置 `tauri-plugin-updater` 与自动化工作流（[.github/workflows/release-app.yml](./.github/workflows/release-app.yml)），推送新版本 Tag 后自动构建 macOS（Apple Silicon / Intel）与 Windows 签名包，客户端应用内一键静默更新重启。
 
 ---
@@ -131,9 +131,12 @@ pnpm tauri build --bundles app,dmg
 ```text
 native-isp-vps/
 ├── SKILL.md                          # AI Agent 技能主文件（含 Stage 5.5 看板一键安装与自动交接）
+├── AGENTS.md                         # 仓库工程规范与 AI-Native 架构不变量
 ├── README.md                         # 项目说明与产品截图画廊
 ├── LICENSE                           # MIT License
 ├── scripts/
+│   ├── check.sh                      # 唯一质量门禁（lint-arch + tsc/vite + clippy + cargo test）
+│   ├── lint-arch.mjs                 # 零依赖静态架构守卫（IPC/版本一致/无阻塞热路径/GEOIP no-resolve）
 │   └── cockpit-handoff.sh            # AI 部署完成后的 Zero-Touch 0600 安全交接脚本
 ├── docs/images/                      # 高清 2x Retina 产品实机截图与图标资源
 ├── references/

@@ -77,6 +77,13 @@ for (const file of feFiles) {
           `  Fix: Describe actual local 0600 credential storage (~/.config/native-isp-vps/secrets.json).`
       );
     }
+    if (/\?\?\s*["']\d+\.\d+\.\d+["']/.test(line)) {
+      failures.push(
+        `[NO_HARDCODED_APP_VERSION] ${r}:${idx + 1}: hardcoded fallback app version literal (${line.trim()}).\n` +
+          `  Why: Hardcoded version fallbacks drift silently across releases.\n` +
+          `  Fix: Import 'pkg' from '../../package.json' and use 'pkg.version' as the single source of truth.`
+      );
+    }
   });
 }
 
@@ -180,6 +187,16 @@ if (!(pkgVer && tauriVer && cargoVer && pkgVer === tauriVer && tauriVer === carg
     `[VERSION_PARITY] Version mismatch across manifests: package.json=${pkgVer}, Cargo.toml=${cargoVer}, tauri.conf.json=${tauriVer}.\n` +
       `  Why: Release tags & Tauri updater rely on identical version numbers across JS/Rust/Tauri configs.\n` +
       `  Fix: Align 'version' in app/package.json, app/src-tauri/Cargo.toml, and app/src-tauri/tauri.conf.json.`
+  );
+}
+
+// 7. Prevent accidental tracking of private credential files or real Bearer tokens in repo docs
+const forbiddenSecretFiles = walk(ROOT, [".key", ".pem", "secrets.json", "nodes.json"]);
+for (const file of forbiddenSecretFiles) {
+  failures.push(
+    `[NO_TRACKED_SECRETS] ${rel(file)}: sensitive credential or private key file found in repository.\n` +
+      `  Why: SSH keys, signing keys, and node credentials must never enter the Git workspace.\n` +
+      `  Fix: Remove the file from the repository and store it under ~/.config/native-isp-vps/ or ~/.ssh/.`
   );
 }
 

@@ -27,6 +27,7 @@ import { AuditTab } from "./AuditTab";
 import { ShieldTab } from "./ShieldTab";
 import { SettingsTab } from "./SettingsTab";
 import { api, isTauriRuntime } from "../lib/tauri";
+import pkg from "../../package.json";
 
 type NavKey = "overview" | "network" | "users" | "audit" | "shield" | "settings";
 
@@ -113,7 +114,7 @@ export const CockpitApp: React.FC = () => {
           className="titlebar-drag flex h-12 items-center justify-end px-4 pt-2"
         >
           <span className="pointer-events-none rounded-md border border-white/8 bg-white/[0.04] px-2 py-0.5 font-mono-num text-[10px] tracking-wider text-zinc-400">
-            v{updater.releaseInfo?.currentVersion ?? "0.1.2"}
+            v{updater.releaseInfo?.currentVersion ?? pkg.version}
           </span>
         </div>
 

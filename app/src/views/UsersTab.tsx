@@ -21,7 +21,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ node, clients, onShowQr, onT
       <div className="glass-card flex items-center justify-between gap-3 rounded-2xl px-5 py-4">
         <div className="flex items-center gap-2 text-[14px] font-semibold text-zinc-100">
           <Users className="h-4 w-4 text-emerald-400" />
-          多用户与订阅
+          订阅与配额
         </div>
         <div className="inline-flex items-center gap-2 rounded-xl border border-white/8 bg-black/35 px-3 py-1.5 font-mono-num text-[12px]">
           <span className="text-zinc-400">每月 {node.resetDay} 日重置</span>
@@ -37,7 +37,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ node, clients, onShowQr, onT
           暂无客户端配额数据
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4">
+        <div className={clients.length === 1 ? "grid max-w-xl grid-cols-1 gap-4" : "grid grid-cols-2 gap-4"}>
           {clients.map((client) => {
             const used = client.upBytes + client.downBytes;
             const total = client.totalBytes || node.monthlyTotalGb * 1024 ** 3;

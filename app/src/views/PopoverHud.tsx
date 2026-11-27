@@ -133,10 +133,14 @@ export const PopoverHud: React.FC = () => {
     [snapshot?.history, useLocal]
   );
 
-  const primaryClient = snapshot?.clients[0];
-  const primaryUsed = primaryClient ? primaryClient.upBytes + primaryClient.downBytes : 0;
-  const primaryTotal = primaryClient?.totalBytes || activeNode.monthlyTotalGb * 1024 ** 3;
-  const primaryPct = primaryTotal > 0 ? Math.min(100, (primaryUsed / primaryTotal) * 100) : 0;
+  const clients = snapshot?.clients ?? [];
+  const primaryClient = clients[0];
+  const totalUsed = clients.reduce((acc, c) => acc + c.upBytes + c.downBytes, 0);
+  const totalQuota =
+    clients.length === 1 && primaryClient?.totalBytes
+      ? primaryClient.totalBytes
+      : activeNode.monthlyTotalGb * 1024 ** 3;
+  const primaryPct = totalQuota > 0 ? Math.min(100, (totalUsed / totalQuota) * 100) : 0;
 
   const memPct =
     snapshot && snapshot.xui.memTotal > 0
@@ -296,10 +300,12 @@ export const PopoverHud: React.FC = () => {
         <div className="glass-card mt-2.5 rounded-xl px-3 py-2.5">
           <div className="flex items-center justify-between text-[11px]">
             <span className="font-medium text-zinc-200">
-              {primaryClient ? `配额 · ${primaryClient.email}` : "月度流量配额"}
+              {clients.length === 1 && primaryClient
+                ? `配额 · ${primaryClient.email}`
+                : "月度流量配额"}
             </span>
             <span className="font-mono-num text-zinc-400">
-              {formatBytes(primaryUsed)} / {formatBytes(primaryTotal)}
+              {formatBytes(totalUsed)} / {formatBytes(totalQuota)}
             </span>
           </div>
           <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/8">

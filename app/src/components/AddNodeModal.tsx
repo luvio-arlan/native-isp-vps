@@ -32,9 +32,9 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
   const [panelUsername, setPanelUsername] = useState("");
   const [panelPassword, setPanelPassword] = useState("");
   const [subUrl, setSubUrl] = useState("");
-  const [monthlyTotalGb, setMonthlyTotalGb] = useState("1000");
+  const [monthlyTotalGb, setMonthlyTotalGb] = useState("2000");
   const [resetDay, setResetDay] = useState("25");
-  const [sshKeyPath, setSshKeyPath] = useState("~/.ssh/id_ed25519");
+  const [sshKeyPath, setSshKeyPath] = useState("~/.ssh/id_ed25519_native_isp");
 
   // JSON import
   const [rawJson, setRawJson] = useState("");
@@ -75,7 +75,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
         panelUsername: panelUsername.trim() || undefined,
         panelPassword: panelPassword.trim() || undefined,
         subUrl: subUrl.trim() || undefined,
-        monthlyTotalGb: Number(monthlyTotalGb) || 1000,
+        monthlyTotalGb: Number(monthlyTotalGb) || 2000,
         resetDay: Number(resetDay) || 1,
         sshKeyPath: sshKeyPath.trim() || undefined,
         source: "manual",
@@ -333,7 +333,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
               rows={8}
               value={rawJson}
               onChange={(e) => setRawJson(e.target.value)}
-              placeholder={`{\n  "host": "38.55.142.88",\n  "flag": "🇺🇸",\n  "city": "Los Angeles",\n  "ispTag": "Dual ISP",\n  "panelUrl": "http://38.55.142.88:2053/webbase",\n  "apiToken": "...",\n  "subUrl": "http://38.55.142.88:2096/sub/...",\n  "monthlyTotalGb": 1000,\n  "resetDay": 25\n}`}
+              placeholder={`{\n  "host": "38.55.142.88",\n  "flag": "🇺🇸",\n  "city": "Los Angeles",\n  "ispTag": "Dual ISP",\n  "panelUrl": "http://38.55.142.88:2053/webbase",\n  "apiToken": "...",\n  "subUrl": "http://38.55.142.88:2096/sub/...",\n  "monthlyTotalGb": 2000,\n  "resetDay": 25\n}`}
               className="w-full rounded-xl border border-white/10 bg-black/45 p-3 font-mono-num text-[11.5px] text-zinc-200 outline-none focus:border-emerald-500/50"
             />
             {error && (

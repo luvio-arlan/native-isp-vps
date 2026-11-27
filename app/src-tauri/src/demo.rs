@@ -114,30 +114,17 @@ pub async fn build_demo_snapshot(
         udp_count: 6,
     };
 
-    let clients = vec![
-        ClientQuota {
-            email: "Me".to_string(),
-            enable: true,
-            up_bytes: 28_600_000_000,
-            down_bytes: 136_400_000_000,
-            total_bytes: 500 * 1024 * 1024 * 1024,
-            reset_day: 25,
-            online: true,
-            sub_id: Some("demo7a9f2c8e1b4d".to_string()),
-            sub_url: Some("http://38.55.142.88:2096/sub/demo7a9f2c8e1b4d".to_string()),
-        },
-        ClientQuota {
-            email: "GF".to_string(),
-            enable: true,
-            up_bytes: 7_200_000_000,
-            down_bytes: 49_800_000_000,
-            total_bytes: 500 * 1024 * 1024 * 1024,
-            reset_day: 25,
-            online: true,
-            sub_id: Some("demo4f1c9a2e7d0b".to_string()),
-            sub_url: Some("http://38.55.142.88:2096/sub/demo4f1c9a2e7d0b".to_string()),
-        },
-    ];
+    let clients = vec![ClientQuota {
+        email: "Shared".to_string(),
+        enable: true,
+        up_bytes: 35_800_000_000,
+        down_bytes: 186_200_000_000,
+        total_bytes: 2000 * 1024 * 1024 * 1024,
+        reset_day: 25,
+        online: true,
+        sub_id: Some("demo7a9f2c8e1b4d".to_string()),
+        sub_url: Some("http://38.55.142.88:2096/sub/demo7a9f2c8e1b4d".to_string()),
+    }];
 
     TelemetrySnapshot {
         node_id: "demo-la".to_string(),

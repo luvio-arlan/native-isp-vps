@@ -1,6 +1,6 @@
 [package]
 name = "native-isp-cockpit"
-version = "0.1.2"
+version = "0.1.3"
 description = "Local flagship telemetry cockpit and menu bar HUD for native-isp-vps"
 authors = ["luvio-arlan"]
 license = "MIT"

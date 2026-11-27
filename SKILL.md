@@ -17,10 +17,10 @@ description: >-
 一次性向用户确认以下信息：
 
 1. **是否已购买 VPS？**
-   - **未购买**：读取并分享 [vps-guide.md](./references/vps-guide.md)，建议选择 **Debian 11 / 12 (x86_64)** + 独立公网 IPv4，买好后提供登录凭证即可。
-   - **已购买**：收集：
+   - **未购买**：读取并分享 [vps-guide.md](./references/vps-guide.md)，建议直接选择 **单台靠谱的美西原生双 ISP（9929 / CMIN2 / CN2 GIA）** + **Debian 11 / 12 (x86_64)** + 独立公网 IPv4（避开 384MB–512MB 廉价香港/亚太小机，晚高峰极易抖动丢包且徒增双机分流复杂度），买好后提供登录凭证即可。
+   - **已购买**：收集（能自动读取的优先自动读取，未知项向用户确认）：
      - **SSH 凭证**：IP、端口（默认 22）、用户名（通常 `root`）、密码或私钥路径
-     - **用户与流量配额**：独立订阅数量与备注（如 `Me`、`GF`）、VPS 月总流量（如 `1TB`）、每人分配额度、账单重置日（如每月 `25` 号），用于 Clash 卡片显示剩余流量进度条
+     - **月度流量与重置日**：VPS 月总流量（如 `1TB` / `2TB`）与账单重置日（如每月 `25` 号），用于 Clash 卡片与看板展示剩余流量进度条；**默认单机单订阅全员共享全部流量（不限设备数、最纯净省心），除非用户明确要求拆分为多用户独立配额**
      - **本机加固与看板**：是否顺手自动优化本机 Clash Verge Rev（禁 IPv6、Fake-IP DoH、TUN `Mixed` + `Merge` 并发保活），以及是否一键安装并自动接入本地 **Native ISP Cockpit** 领航看板（支持窗口化驾驶舱 + 状态栏实时网速/延迟 + GitHub 自动更新）
 
 > [!IMPORTANT]
@@ -94,21 +94,21 @@ description: >-
 
 统一使用 **纯 TCP `VLESS + Reality + Vision (443/tcp)`**——每条连接独立 TCP 互不连坐、零白天 UDP QoS 断流、全端免脚本开箱即稳。
 
-1. **自动优选低延迟 Reality 伪装目标**（避开 `www.apple.com`）：
+1. **自动优选低延迟 Reality 伪装目标**（避开 `www.apple.com`，强制 `-4` 防纯 IPv4 机浪费 2s 回退）：
    - 实测 `www.cisco.com`、`www.oracle.com`、`www.shopify.com`、`www.microsoft.com`、`aws.amazon.com`、`www.datadoghq.com`：
      ```bash
-     curl -sI --http2 --tlsv1.3 --max-time 3 -w "code=%{http_code} ver=%{http_version} t_conn=%{time_connect} t_tls=%{time_appconnect}\n" -o /dev/null "https://$d"
+     curl -4 -sI --http2 --tlsv1.3 --max-time 3 -w "code=%{http_code} ver=%{http_version} t_conn=%{time_connect} t_tls=%{time_appconnect}\n" -o /dev/null "https://$d"
      ```
    - 选择 `HTTP 200`、`HTTP/2`、`TLS 1.3` 且 `t_conn` 最低的域名作为 Reality `target` / `serverNames`。
 2. **静态极简命名**：
    - 基于 `ipinfo.io` 生成 `"<国旗Emoji> <City> · Dual ISP"`（如 `🇺🇸 Los Angeles · Dual ISP`，非双 ISP 用 `Native` 或 `VPS`），写入入站 `remark` 与 `settings.subTitle`。
    - `settings.remarkTemplate` 固定为 **`{{INBOUND}} · Reality`**（严禁写入动态流量变量，以免破坏 Clash `store-selected` 记忆；剩余流量由 `Subscription-Userinfo` 进度条展示）。
    - *写入 SQLite 时使用 Python ASCII Unicode 转义防止终端 Emoji 乱码。*
-3. **生成密钥与用户凭证**：
+3. **生成密钥与共享凭证（默认单订阅，按需才拆分）**：
    - 调用 `GET http://127.0.0.1:<PANEL_PORT>/<WEB_BASE_PATH>/panel/api/server/getNewX25519Cert`（Header: `Authorization: Bearer <API_TOKEN>`）生成 Reality `privateKey` / `publicKey`。
-   - 为每位用户生成独立 `UUID`（`/proc/sys/kernel/random/uuid`）与 16 位 `Sub ID`（`openssl rand -hex 8`）；生成 2 个 `Short IDs`（`openssl rand -hex 4`、`openssl rand -hex 8`）。
+   - **默认创建 1 个统一共享客户端**（`email: "Shared"`，生成 1 组 `UUID` `/proc/sys/kernel/random/uuid` 与 16 位 `Sub ID` `openssl rand -hex 8`，多设备/多人共用同一条万能订阅）；**仅当用户明确要求拆分多成员额度时**，再按人生成独立 `UUID`/`Sub ID`。生成 2 个 `Short IDs`（`openssl rand -hex 4`、`openssl rand -hex 8`）。
 4. **创建入站并写入生产级 Xray 配置**：
-   - 入站参数：`vless` · `443/tcp` · `reality` · uTLS `chrome` · `spiderX: "/"`；每个客户端 `enable: true`、`flow: "xtls-rprx-vision"`、独立 `email`/`id`/`subId`、`limitIp: 0`。
+   - 入站参数：`vless` · `443/tcp` · `reality` · uTLS `chrome` · `spiderX: "/"`；客户端 `enable: true`、`flow: "xtls-rprx-vision"`、`limitIp: 0`（不限同时在线设备数）。
    - **入站 `streamSettings.sockopt`**（20s 淘汰僵尸 Socket 触发秒重连）：
      ```json
      "sockopt": {
@@ -120,12 +120,12 @@ description: >-
        "tcpcongestion": "bbr"
      }
      ```
-   - **流量配额与自动重置**：按字节写入 `totalGB`（如 `1000GB = 1073741824000`），同步更新 `clients`（`total_gb`, `traffic_reset='monthly'`, `traffic_reset_day`）与 `client_traffics`（`total`, `reset_day`）。
+   - **流量配额与自动重置**：按用户提供的月总流量或面板已有配置以字节写入 `totalGB`（如 `2000GB = 2147483648000`），同步更新 `inbounds`、`clients`（`total_gb`, `traffic_reset='monthly'`, `traffic_reset_day`）与 `client_traffics`（`total`, `reset_day`）。
    - **强化 `settings.xrayTemplateConfig`**：
      1. 内置缓存 DNS：`"dns": {"servers": ["1.1.1.1", "8.8.8.8"], "queryStrategy": "UseIPv4", "disableCache": false}`
      2. 长连接 Policy：`policy.levels.0` 写入 `"handshake": 4, "connIdle": 600, "uplinkOnly": 2, "downlinkOnly": 5`（保留 `statsUser*`）
      3. 路由防 BT：`{"type":"field","protocol":["bittorrent"],"outboundTag":"blocked"}`
-     4. 纯 IPv4 出站保活：无 IPv6 出口的 VPS 在 `direct`（`freedom`）出站配置 `"domainStrategy": "UseIPv4"` 及 `sockopt`（`tcpNoDelay: true`, `tcpKeepAliveIdle: 60`, `tcpKeepAliveInterval: 15`）
+     4. 纯 IPv4 出站保活：无 IPv6 出口的 VPS 在 `direct`（`freedom`）出站的 `streamSettings.sockopt` 中配置 `"domainStrategy": "UseIPv4"`、`tcpNoDelay: true`、`tcpKeepAliveIdle: 60`、`tcpKeepAliveInterval: 15`（切勿写在已废弃的 `settings.domainStrategy` 中，确保 Xray 26+ 零警告）
 5. **最小暴露安全加固（UFW + Fail2ban）**：
    - 安装 `ufw` 与 `fail2ban`，仅放行 SSH 端口、`443/tcp`、订阅端口（`2096/tcp`）、面板端口（`<PANEL_PORT>/tcp`），再执行 `ufw --force enable && systemctl enable ufw`。
    - `/etc/fail2ban/jail.local` 守护实际 SSH 端口，显式配置 `backend = systemd`、`bantime = 1h`、`findtime = 10m`、`maxretry = 5`。
@@ -145,8 +145,8 @@ description: >-
    - `subClashEnableRouting = 'true'`，`subClashAutoDetect = 'true'`，`subClashRemoteDNS = 'true'`
    - `subTitle`：提前写入静态标题（确保首次导入自动命名卡片）
    - `remarkTemplate = '{{INBOUND}} · Reality'`
-   - `subClashRules`：顶部写入 `IP-CIDR,<VPS_IP>/32,DIRECT,no-resolve`，紧接 [mihomo-rules.yaml](./references/mihomo-rules.yaml) 全部规则（禁代理内 QUIC UDP/443 + 全系海外 AI 强制代理 + Google Play CDN + 国内直连且 `GEOIP` 强制带 `no-resolve` 保住 Fake-IP 秒发；`MATCH,PROXY` 由面板兜底）。
-   - **多节点防封容灾建议（若有备机）**：对 Claude/OpenAI 等严控出口 IP 稳定性的 AI 服务，严禁使用 `load-balance` 或激进 `url-test`；应配置高粘性 `fallback` 策略组（`interval: 300`，仅主节点不可达时自动切备机）。
+   - `subClashRules`：顶部写入 `IP-CIDR,<VPS_IP>/32,DIRECT,no-resolve`，紧接 [mihomo-rules.yaml](./references/mihomo-rules.yaml) 全部规则（禁代理内 QUIC UDP/443 + 全系海外 AI 强制代理 + Google Play CDN + 国内直连且 **所有 `GEOIP` 强制带 `,no-resolve`** 保住 Fake-IP `<1ms` 秒发；`MATCH,PROXY` 由面板兜底）。
+   - **单机纯净原则**：默认一机一链直连，不主动引入多机分流（若用户确有备机，AI 服务严禁 `load-balance` 或激进 `url-test`，仅可用高粘性 `fallback`）。
 2. **公网地址输出避坑**：不要设置 `subDomain`（否则本机 `127.0.0.1` 验真报 `403`）；在 `inbounds` 表设置 `share_addr_strategy = 'custom'`、`share_addr = '<VPS_IP>'`。
 3. **清理临时文件并重启**：
    ```bash
@@ -207,7 +207,7 @@ description: >-
          "subUrl": "http://<VPS_IP>:2096/<subPath>/<SubID>",
          "mihomoSubUrl": "http://<VPS_IP>:2096/mihomo/<SubID>",
          "realityTarget": "<REALITY_SNI>",
-         "monthlyTotalGb": 1000,
+         "monthlyTotalGb": 2000,
          "resetDay": 25,
          "sshPort": <SSH_PORT>,
          "sshUser": "root",
