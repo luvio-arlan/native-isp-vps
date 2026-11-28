@@ -8,6 +8,7 @@ Thumbs.db
 app/node_modules/
 app/dist/
 app/.vite/
+.pnpm-store/
 *.local
 
 # Rust & Tauri

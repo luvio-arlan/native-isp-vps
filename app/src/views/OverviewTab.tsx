@@ -6,6 +6,7 @@ import {
   Copy,
   Cpu,
   Globe,
+  KeyRound,
   QrCode,
   Radio,
   ShieldCheck,
@@ -23,6 +24,9 @@ import {
   formatSpeedInline,
   formatUptime,
 } from "../lib/format";
+import { copyText } from "../lib/clipboard";
+import { describePanelTransport } from "../lib/diagnostic";
+import { summarizeQuota } from "../lib/quota";
 
 interface OverviewTabProps {
   node: NodeConfig;
@@ -72,12 +76,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const swapPct = xui && xui.swapTotal > 0 ? (xui.swapUsed / xui.swapTotal) * 100 : 0;
   const diskPct = xui && xui.diskTotal > 0 ? (xui.diskUsed / xui.diskTotal) * 100 : 0;
 
-  const totalUsedBytes = (snapshot?.clients ?? []).reduce(
-    (acc, c) => acc + c.upBytes + c.downBytes,
-    0
-  );
-  const totalQuotaBytes = node.monthlyTotalGb * 1024 ** 3;
-  const forecast = forecastCycleUsage(totalUsedBytes, totalQuotaBytes, node.resetDay);
+  const quota = summarizeQuota(node, snapshot?.clients ?? []);
+  const forecast = forecastCycleUsage(quota.usedBytes, quota.totalBytes, node.resetDay);
+  const transport = describePanelTransport(xui?.panelTransport);
 
   const subUrl = snapshot?.clients[0]?.subUrl || node.subUrl;
 
@@ -86,7 +87,10 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       onToast("当前节点未配置订阅链接");
       return;
     }
-    await navigator.clipboard.writeText(subUrl);
+    if (!(await copyText(subUrl))) {
+      onToast("复制失败，请先点击窗口后重试");
+      return;
+    }
     setCopied(true);
     onToast("万能订阅链接已复制到剪贴板");
     setTimeout(() => setCopied(false), 1800);
@@ -281,9 +285,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
             <div className="mt-2 flex items-baseline justify-between font-mono-num">
               <span className="text-[20px] font-semibold text-zinc-100">
-                {formatBytes(totalUsedBytes)}
+                {formatBytes(quota.usedBytes)}
               </span>
-              <span className="text-[11.5px] text-zinc-400">/ {node.monthlyTotalGb} GB</span>
+              <span className="text-[11.5px] text-zinc-400">/ {formatBytes(quota.totalBytes)}</span>
             </div>
 
             <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/8">
@@ -358,6 +362,15 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 : "未连接"}
             </span>
           </div>
+          {transport && (
+            <div className="flex items-center gap-2" title={transport.hint}>
+              <KeyRound className={`h-4 w-4 ${transport.secure ? "text-emerald-400" : "text-amber-400"}`} />
+              <span className="text-zinc-400">面板 API</span>
+              <span className={`font-mono-num ${transport.secure ? "text-zinc-100" : "text-amber-300"}`}>
+                {transport.label}
+              </span>
+            </div>
+          )}
         </div>
         {xui?.error && (
           <span className="text-[11px] text-amber-300">{xui.error}</span>

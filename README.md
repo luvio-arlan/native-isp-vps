@@ -82,7 +82,10 @@
 
 ### 本地领航看板（`app/` · Tauri v2 + Rust + React 19）
 - **零额外 VPS 守护进程**：不向 1GB VPS 注入任何额外探针进程或新端口——复用 **3x-ui 原生 API**（Bearer Token 优先 + Cookie 登录兜底）与 **本机 Mihomo Unix Socket**，后台收起自动降频（`2s → 15s`）极度省资源。
-- **本地 0600 安全边界**：API Token 与面板密码仅以 `0600` 权限原子写入 `~/.config/native-isp-vps/secrets.json` 并走进程内内存缓存（零 Keychain 授权弹窗、绝不进 Git），交接临时文件在 1 秒内覆零粉碎。
+- **面板 API 全程 SSH 加密**：配置体检私钥后，看板自动经专用 `ssh -L` 隧道访问面板，管理员 Token / 密码从不明文出网；隧道临时中断时宁可暂停也不降级明文（fail-closed），总览页实时标示传输方式。
+- **真实链路 RTT**：macOS 上探测 socket 绑定物理网卡（`IP_BOUND_IF`）绕过本机 TUN，直测 TCP 握手往返，零面板请求、不触碰 Reality 端口。
+- **内核 + DNS 深度体检**：一键 SSH 只读体检 FQ/BBR/TFO/ECN/保活/UFW/Fail2ban/Swap，并逐个探测 VPS DNS 上游可达性（揪出导致 REALITY 新连接随机 +2s 的坏上游），异常项自动进入「AI 修复诊断包」。
+- **本地 0600 安全边界**：API Token 与面板密码仅以 `0600` 权限原子写入 `~/.config/native-isp-vps/secrets.json` 并走进程内内存缓存（零 Keychain 授权弹窗、绝不进 Git）；交接文件校验后原子落盘、导入后覆零删除，格式错误的文件会被隔离并通知；WebView 启用严格 CSP 与最小权限 capability。
 - **共享 / 多成员配额与手机扫码**：默认单订阅全员共享月流量（亦支持按需拆分多成员独立额度），实时展示 30 天周期消耗预测，一键复制万能订阅或即时生成二维码供 iPhone Shadowrocket / Android FlClash 扫码导入。
 - **GitHub Releases 自动热更新**：内置 `tauri-plugin-updater` 与自动化工作流（[.github/workflows/release-app.yml](./.github/workflows/release-app.yml)），推送新版本 Tag 后自动构建 macOS（Apple Silicon / Intel）与 Windows 签名包，客户端应用内一键静默更新重启。
 
@@ -136,8 +139,9 @@ native-isp-vps/
 ├── LICENSE                           # MIT License
 ├── scripts/
 │   ├── check.sh                      # 唯一质量门禁（lint-arch + tsc/vite + clippy + cargo test）
-│   ├── lint-arch.mjs                 # 零依赖静态架构守卫（IPC/版本一致/无阻塞热路径/GEOIP no-resolve）
-│   └── cockpit-handoff.sh            # AI 部署完成后的 Zero-Touch 0600 安全交接脚本
+│   ├── lint-arch.mjs                 # 零依赖静态架构守卫（双向 IPC/事件契约、CSP、SSH 构建器、版本与 CHANGELOG 一致、DNS/GEOIP 规则）
+│   └── cockpit-handoff.sh            # AI 部署完成后的 Zero-Touch 0600 原子交接脚本
+├── CHANGELOG.md                      # 版本说明（发版工作流自动提取对应段落作为 Release 正文）
 ├── docs/images/                      # 高清 2x Retina 产品实机截图与图标资源
 ├── references/
 │   ├── vps-guide.md                  # 主流海外 VPS 客观选型速查

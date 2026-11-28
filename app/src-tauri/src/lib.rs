@@ -6,16 +6,48 @@ mod local_probe;
 mod metrics;
 mod mihomo;
 mod models;
+mod panel_tunnel;
 mod poller;
+mod ssh;
 mod ssh_audit;
 mod state;
 mod storage;
 mod tray;
 mod updater;
+mod validate;
 mod xui;
 
 use state::CockpitState;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{RwLock, RwLockWriteGuard};
+
+/// Exit-path lock acquisition without `blocking_write` (which panics inside a runtime context):
+/// retries `try_write` for up to ~400ms so an in-flight poll tick can release the lock first.
+fn write_on_exit<T>(lock: &RwLock<T>) -> Option<RwLockWriteGuard<'_, T>> {
+    for _ in 0..40 {
+        if let Ok(guard) = lock.try_write() {
+            return Some(guard);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    None
+}
+
+fn persist_on_exit(state: &CockpitState) {
+    if let Some(mut hist) = write_on_exit(&state.history) {
+        hist.flush_partial_minutes();
+        if let Some(buckets) = hist.take_persist_snapshot(true) {
+            let _ = storage::save_history_buckets(&buckets);
+        }
+    }
+    if let Some(mut carrier_hist) = write_on_exit(&state.carrier_history) {
+        if let Some(map) = carrier_hist.take_persist_snapshot() {
+            let _ = storage::save_carrier_history(&map);
+        }
+    }
+    panel_tunnel::shutdown_all();
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -63,18 +95,7 @@ pub fn run() {
             tauri::RunEvent::Reopen { .. } => {
                 tray::show_main_window_internal(app_handle, &event_state);
             }
-            tauri::RunEvent::Exit => {
-                if let Ok(mut hist) = event_state.history.try_write() {
-                    if let Some(buckets) = hist.take_persist_snapshot(true) {
-                        let _ = storage::save_history_buckets(&buckets);
-                    }
-                }
-                if let Ok(mut carrier_hist) = event_state.carrier_history.try_write() {
-                    if let Some(map) = carrier_hist.take_persist_snapshot() {
-                        let _ = storage::save_carrier_history(&map);
-                    }
-                }
-            }
+            tauri::RunEvent::Exit => persist_on_exit(&event_state),
             _ => {
                 let _ = app_handle;
             }

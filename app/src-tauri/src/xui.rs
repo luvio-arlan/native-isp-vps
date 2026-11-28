@@ -1,4 +1,5 @@
 use crate::models::{ClientQuota, NodeConfig, NodeSecrets, XuiStatus};
+use crate::panel_tunnel::{self, PanelTransport};
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -46,15 +47,35 @@ pub fn evict_client(node_id: &str) {
     }
 }
 
-fn get_or_create_client(cache_key: &str) -> Result<Client, String> {
+/// Returns the pooled client for `node_id::base`, evicting the node's clients/sessions for any
+/// previous base (e.g. a re-established SSH tunnel on a new local port) so they never accumulate.
+fn get_or_create_client(node_id: &str, cache_key: &str) -> Result<Client, String> {
     let map = XUI_CLIENTS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = map.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(c) = guard.get(cache_key) {
         return Ok(c.clone());
     }
+    let prefix = format!("{node_id}::");
+    let is_stale = |k: &String| k.starts_with(&prefix) && k != cache_key;
+    guard.retain(|k, _| !is_stale(k));
+    for sessions in [&WARM_SESSIONS, &COOKIE_ONLY_SESSIONS] {
+        if let Some(set) = sessions.get() {
+            set.lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .retain(|k| !is_stale(k));
+        }
+    }
     let client = build_client()?;
     guard.insert(cache_key.to_string(), client.clone());
     Ok(client)
+}
+
+/// Last known client quotas for `node_id`, regardless of cache age (used while the panel is down).
+fn last_known_clients(node_id: &str) -> Vec<ClientQuota> {
+    CLIENTS_CACHE
+        .get()
+        .and_then(|m| m.lock().ok().and_then(|g| g.get(node_id).map(|(_, v)| v.clone())))
+        .unwrap_or_default()
 }
 
 fn is_session_warm(cache_key: &str) -> bool {
@@ -319,9 +340,17 @@ pub async fn fetch_xui_telemetry(
         return (status, Vec::new());
     }
 
-    let base = node.panel_url.trim_end_matches('/');
+    let route = panel_tunnel::resolve(node).await;
+    status.panel_transport = route.transport.as_str().to_string();
+    if route.transport == PanelTransport::Paused {
+        status.error =
+            Some("SSH 加密隧道重连中：为防面板 Token 明文泄露，已暂停面板 API".to_string());
+        return (status, last_known_clients(&node.id));
+    }
+
+    let base = route.base.as_str();
     let cache_key = format!("{}::{}", node.id, base);
-    let client = match get_or_create_client(&cache_key) {
+    let client = match get_or_create_client(&node.id, &cache_key) {
         Ok(c) => c,
         Err(e) => {
             status.error = Some(e);
@@ -428,7 +457,8 @@ pub async fn fetch_xui_telemetry(
         Ok(val) => parse_status_obj(&mut status, &val),
         Err(e) => {
             status.error = Some(e);
-            return (status, cached_clients.unwrap_or_default());
+            let clients = cached_clients.unwrap_or_else(|| last_known_clients(&node.id));
+            return (status, clients);
         }
     }
 

@@ -2,6 +2,8 @@ import React from "react";
 import { Copy, QrCode, Users } from "lucide-react";
 import type { ClientQuota, NodeConfig } from "../types/telemetry";
 import { daysUntilReset, forecastCycleUsage, formatBytes } from "../lib/format";
+import { copyText } from "../lib/clipboard";
+import { clientTotalBytes } from "../lib/quota";
 
 interface UsersTabProps {
   node: NodeConfig;
@@ -12,8 +14,7 @@ interface UsersTabProps {
 
 export const UsersTab: React.FC<UsersTabProps> = ({ node, clients, onShowQr, onToast }) => {
   const copyUrl = async (url: string, label: string) => {
-    await navigator.clipboard.writeText(url);
-    onToast(`已复制 ${label} 的万能订阅链接`);
+    onToast((await copyText(url)) ? `已复制 ${label} 的万能订阅链接` : "复制失败，请先点击窗口后重试");
   };
 
   return (
@@ -40,7 +41,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ node, clients, onShowQr, onT
         <div className={clients.length === 1 ? "grid max-w-xl grid-cols-1 gap-4" : "grid grid-cols-2 gap-4"}>
           {clients.map((client) => {
             const used = client.upBytes + client.downBytes;
-            const total = client.totalBytes || node.monthlyTotalGb * 1024 ** 3;
+            const total = clientTotalBytes(node, client);
             const fc = forecastCycleUsage(used, total, client.resetDay || node.resetDay);
             const subUrl = client.subUrl || node.subUrl;
 

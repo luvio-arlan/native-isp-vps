@@ -5,6 +5,7 @@ use crate::models::{
     GitHubReleaseInfo, HandoffPayload, HistoryBucket, LeakCheckResult, NodeConfig,
     TelemetrySnapshot,
 };
+use crate::panel_tunnel;
 use crate::poller;
 use crate::ssh_audit;
 use crate::state::{self, CockpitState};
@@ -12,8 +13,19 @@ use crate::storage;
 use crate::tray;
 use crate::updater;
 use crate::xui;
+use chrono::Utc;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
+
+/// Allowed `AppSettings.tray_display` values (mirrors `SettingsTab.tsx`).
+const TRAY_DISPLAY_MODES: [&str; 3] = ["speed-rtt", "rtt-only", "dot-only"];
+/// Allowed `AppSettings.theme` values (mirrors `index.css` `[data-theme]` skins).
+const THEMES: [&str; 2] = ["titanium", "obsidian"];
+
+/// Writes settings off the async runtime; failures are non-fatal (in-memory state stays authoritative).
+async fn persist_settings(cfg: AppSettings) {
+    let _ = tokio::task::spawn_blocking(move || storage::save_settings(&cfg)).await;
+}
 
 #[tauri::command]
 pub async fn list_nodes(state: State<'_, Arc<CockpitState>>) -> Result<Vec<NodeConfig>, String> {
@@ -33,6 +45,9 @@ pub async fn set_active_node(
     app: AppHandle,
     state: State<'_, Arc<CockpitState>>,
 ) -> Result<(), String> {
+    if !state.nodes.read().await.iter().any(|n| n.id == node_id) {
+        return Err("未找到目标节点".to_string());
+    }
     {
         let mut active = state.active_node_id.write().await;
         *active = Some(node_id.clone());
@@ -41,7 +56,7 @@ pub async fn set_active_node(
         let mut cfg = state.settings.write().await;
         if cfg.demo_mode {
             cfg.demo_mode = false;
-            let _ = storage::save_settings(&cfg);
+            persist_settings(cfg.clone()).await;
             Some(cfg.clone())
         } else {
             None
@@ -77,8 +92,13 @@ pub async fn upsert_node(
     app: AppHandle,
     state: State<'_, Arc<CockpitState>>,
 ) -> Result<NodeConfig, String> {
-    let node = storage::upsert_from_handoff(payload)?;
-    let nodes = storage::load_nodes();
+    let (node, nodes) = tokio::task::spawn_blocking(move || {
+        storage::upsert_from_handoff(payload).map(|node| (node, storage::load_nodes()))
+    })
+    .await
+    .map_err(|e| format!("保存节点失败: {e}"))??;
+    // SSH host/user/key may have changed: rebuild the panel tunnel on the next poll.
+    panel_tunnel::forget(&node.id).await;
     {
         let mut guard = state.nodes.write().await;
         *guard = nodes.clone();
@@ -90,7 +110,7 @@ pub async fn upsert_node(
     let updated_cfg = {
         let mut cfg = state.settings.write().await;
         cfg.demo_mode = false;
-        let _ = storage::save_settings(&cfg);
+        persist_settings(cfg.clone()).await;
         cfg.clone()
     };
     let _ = app.emit("cockpit://nodes-updated", &nodes);
@@ -106,8 +126,12 @@ pub async fn delete_node(
     app: AppHandle,
     state: State<'_, Arc<CockpitState>>,
 ) -> Result<Vec<NodeConfig>, String> {
-    let nodes = storage::remove_node(&node_id)?;
+    let id = node_id.clone();
+    let nodes = tokio::task::spawn_blocking(move || storage::remove_node(&id))
+        .await
+        .map_err(|e| format!("移除节点失败: {e}"))??;
     xui::evict_client(&node_id);
+    panel_tunnel::forget(&node_id).await;
     {
         let mut hist = state.history.write().await;
         hist.remove_node(&node_id);
@@ -140,7 +164,7 @@ pub async fn delete_node(
     let updated_cfg = if nodes.is_empty() {
         let mut cfg = state.settings.write().await;
         cfg.demo_mode = true;
-        let _ = storage::save_settings(&cfg);
+        persist_settings(cfg.clone()).await;
         Some(cfg.clone())
     } else {
         None
@@ -183,7 +207,7 @@ pub async fn get_history_24h(
     }
     let id = target_id.unwrap_or_default();
     let store = state.history.read().await;
-    Ok(store.get_24h_buckets(&id))
+    Ok(store.get_24h_buckets(&id, Utc::now().timestamp_millis()))
 }
 
 #[tauri::command]
@@ -284,7 +308,16 @@ pub async fn update_settings(
     sanitized.poll_active_secs = sanitized.poll_active_secs.clamp(1, 30);
     sanitized.poll_idle_secs = sanitized.poll_idle_secs.clamp(5, 120);
     sanitized.inbox_dir = storage::inbox_dir().to_string_lossy().to_string();
-    storage::save_settings(&sanitized)?;
+    if !TRAY_DISPLAY_MODES.contains(&sanitized.tray_display.as_str()) {
+        sanitized.tray_display = "speed-rtt".to_string();
+    }
+    if !THEMES.contains(&sanitized.theme.as_str()) {
+        sanitized.theme = "titanium".to_string();
+    }
+    let to_save = sanitized.clone();
+    tokio::task::spawn_blocking(move || storage::save_settings(&to_save))
+        .await
+        .map_err(|e| format!("保存设置失败: {e}"))??;
     {
         let mut guard = state.settings.write().await;
         *guard = sanitized.clone();

@@ -64,13 +64,26 @@ description: >-
      tc qdisc show
      ```
    - 关键参数说明：1GB 级小内存保持 `256KB` 默认 / `16MB` 上限缓冲（2GB+ 千兆口可升至 `32MB`）；`tcp_fastopen=0` & `tcp_ecn=0` 避免国内运营商 SYN 黑洞；`tcp_keepalive_time=120` 防止 NAT 静默断连；`tcp_mtu_probing=1` + `tcp_slow_start_after_idle=0` + `tcp_notsent_lowat=16384` 降低交互延迟。
-3. **加固 `/etc/resolv.conf` 冗余 DNS**：
-   ```text
-   nameserver 1.1.1.1
-   nameserver 8.8.8.8
-   nameserver 1.0.0.1
-   options timeout:2 attempts:2 rotate
+3. **探测并加固 `/etc/resolv.conf` 冗余 DNS（只写入实测可达的上游）**：
+   > [!WARNING]
+   > 部分机房会屏蔽个别公共 DNS（实测有机房 `1.0.0.1` 100% 不可达）。Xray REALITY 对**每条新连接**都会解析一次伪装目标，若 `resolv.conf` 掺入不可达上游并启用 `rotate`，约 1/3 的解析会先等满超时，表现为「新开网页/AI 请求随机慢 2 秒」。因此必须先探测、只保留可达者、按优先级顺序写入且**不使用 `rotate`**。
+   ```bash
+   command -v dig >/dev/null || apt-get install -y -qq dnsutils >/dev/null 2>&1
+   GOOD_DNS=""
+   for ns in 1.1.1.1 8.8.8.8 1.0.0.1 8.8.4.4 9.9.9.9; do
+     ok=0; for i in 1 2 3; do dig +time=1 +tries=1 @"$ns" www.cisco.com A >/dev/null 2>&1 && ok=$((ok+1)); done
+     [ "$ok" -eq 3 ] && GOOD_DNS="$GOOD_DNS $ns"
+   done
+   echo "reachable upstreams:$GOOD_DNS"
+   if [ -n "$GOOD_DNS" ]; then
+     # 若为 resolvconf / systemd-resolved 管理的软链接，先解除，避免 DHCP 续约覆盖
+     [ -L /etc/resolv.conf ] && rm -f /etc/resolv.conf
+     { for ns in $(echo $GOOD_DNS | cut -d' ' -f1-3); do echo "nameserver $ns"; done
+       echo "options timeout:1 attempts:2"; } > /etc/resolv.conf
+   fi
+   for i in 1 2 3 4 5 6; do s=$(date +%s%N); getent ahostsv4 www.cisco.com >/dev/null; echo "$(( ($(date +%s%N) - s) / 1000000 ))ms"; done  # 每次都应 < 100ms
    ```
+   记录 `GOOD_DNS` 中前两个上游，Stage 3 的 Xray 内置 DNS 复用它们。
 4. **小内存自动加 1GB Swap**：检查 `swapon --show`，若无 Swap 且磁盘充足，创建 1GB `/swapfile`（`chmod 600`、`mkswap`、`swapon` 并写入 `/etc/fstab`）。
 5. **检查端口**：确认 `443/tcp` 未被占用。
 
@@ -122,13 +135,14 @@ description: >-
      ```
    - **流量配额与自动重置**：按用户提供的月总流量或面板已有配置以字节写入 `totalGB`（如 `2000GB = 2147483648000`），同步更新 `inbounds`、`clients`（`total_gb`, `traffic_reset='monthly'`, `traffic_reset_day`）与 `client_traffics`（`total`, `reset_day`）。
    - **强化 `settings.xrayTemplateConfig`**：
-     1. 内置缓存 DNS：`"dns": {"servers": ["1.1.1.1", "8.8.8.8"], "queryStrategy": "UseIPv4", "disableCache": false}`
+     1. 内置缓存 DNS：`"dns": {"servers": ["1.1.1.1", "8.8.8.8"], "queryStrategy": "UseIPv4", "disableCache": false}`（`servers` 必须替换为 Stage 1 实测可达的 `GOOD_DNS` 前两个上游）
      2. 长连接 Policy：`policy.levels.0` 写入 `"handshake": 4, "connIdle": 600, "uplinkOnly": 2, "downlinkOnly": 5`（保留 `statsUser*`）
      3. 路由防 BT：`{"type":"field","protocol":["bittorrent"],"outboundTag":"blocked"}`
      4. 纯 IPv4 出站保活：无 IPv6 出口的 VPS 在 `direct`（`freedom`）出站的 `streamSettings.sockopt` 中配置 `"domainStrategy": "UseIPv4"`、`tcpNoDelay: true`、`tcpKeepAliveIdle: 60`、`tcpKeepAliveInterval: 15`（切勿写在已废弃的 `settings.domainStrategy` 中，确保 Xray 26+ 零警告）
 5. **最小暴露安全加固（UFW + Fail2ban）**：
    - 安装 `ufw` 与 `fail2ban`，仅放行 SSH 端口、`443/tcp`、订阅端口（`2096/tcp`）、面板端口（`<PANEL_PORT>/tcp`），再执行 `ufw --force enable && systemctl enable ufw`。
    - `/etc/fail2ban/jail.local` 守护实际 SSH 端口，显式配置 `backend = systemd`、`bantime = 1h`、`findtime = 10m`、`maxretry = 5`。
+   - （可选进阶 · 面板零公网暴露）看板在配置 SSH 体检私钥后会自动经 `ssh -L` 加密隧道访问面板 API，因此面板端口可以不对公网放行：执行 `ufw delete allow <PANEL_PORT>/tcp`，浏览器管理时先 `ssh -N -L 2053:127.0.0.1:<PANEL_PORT> root@<VPS_IP>`，再打开 `http://127.0.0.1:2053/<WEB_BASE_PATH>`。仅在用户同意改变浏览器访问方式时执行。
 6. **服务端核验**：
    - `/usr/local/x-ui/bin/xray-linux-amd64 run -test -c /usr/local/x-ui/bin/config.json` → `Configuration OK`
    - 确认 `tc qdisc show` 为 `fq`、`ss -tulpn` 监听 `443/tcp`、`ufw status` 与 `fail2ban-client status sshd` 正常。
@@ -218,8 +232,8 @@ description: >-
        open "/Applications/Native ISP Cockpit.app"
        ```
      - 看板会在 1 秒内捕获该文件、将 `apiToken`/`panelPassword` 以 `0600` 权限原子保存至本地 `~/.config/native-isp-vps/secrets.json` 并**覆零粉碎临时文件**，随后立即点亮状态栏实时网速、延迟与月度配额监控（原色钛合金 / 曜石黑双皮肤可一键切换）。
-   - **④ 反向自愈闭环**：当用户从看板「内核深度体检」页复制「脱敏 AI 修复诊断包」发来时，直接按其中标出的漂移项（如 `qdisc != fq`、`ipv6Leak=true`、`Swap 未配置`）执行 Stage 1 / Stage 3 / Stage 5 定点修复并复验。
+   - **④ 反向自愈闭环**：当用户从看板「内核深度体检」页复制「脱敏 AI 修复诊断包」发来时，直接按其中标出的漂移项（如 `qdisc != fq`、`DNS 上游不可达：1.0.0.1`、`ipv6Leak=true`、`Swap 未配置`、`面板 API 明文 HTTP`）执行 Stage 1 / Stage 3 / Stage 5 / Stage 5.5 定点修复并复验。
 4. **3 步断流/超时速查**：
    1. 查客户端：确认 `tun.stack` 为 `mixed`、存在 `AND,((NETWORK,UDP),(DST-PORT,443)),REJECT` 规则、`Merge` 的 `tcp-concurrent` 与 `keep-alive-idle: 15` 已生效；
    2. 查内核：确认 `tc qdisc show` 为 `fq`、`tcp_fastopen=0`、`tcp_ecn=0`、`tcp_keepalive_time=120`；
-   3. 查 Xray 与资源：确认 Xray 内置 `1.1.1.1+8.8.8.8` 缓存 DNS 正常、`free -h` 内存与 Swap 健康。
+   3. 查 DNS、Xray 与资源：`resolv.conf` 中每个上游都可达且无 `rotate`（连续 6 次 `getent ahostsv4 <REALITY_SNI>` 均 < 0.1s；任何一次 ≈1–2s 即为坏上游）、Xray 内置缓存 DNS 只用可达上游、`free -h` 内存与 Swap 健康。

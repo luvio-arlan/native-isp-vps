@@ -430,7 +430,7 @@ async fn refresh_slow_shield_cache() -> Option<CachedSlowShield> {
     Some(entry)
 }
 
-pub async fn probe_local_shield(vps_host: Option<&str>, force_slow: bool) -> LocalShieldStatus {
+pub async fn probe_local_shield(force_slow: bool) -> LocalShieldStatus {
     let mut shield = LocalShieldStatus {
         mihomo_source: "offline".to_string(),
         mode: "unknown".to_string(),
@@ -531,6 +531,5 @@ pub async fn probe_local_shield(vps_host: Option<&str>, force_slow: bool) -> Loc
         }
     }
 
-    let _ = vps_host;
     shield
 }

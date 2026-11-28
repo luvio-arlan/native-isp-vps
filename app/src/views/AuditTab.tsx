@@ -12,6 +12,7 @@ import {
 import type { AuditReport, NodeConfig, TelemetrySnapshot } from "../types/telemetry";
 import { GaugeRing } from "../components/GaugeRing";
 import { buildAiRepairPrompt } from "../lib/diagnostic";
+import { copyText } from "../lib/clipboard";
 
 interface AuditTabProps {
   node: NodeConfig;
@@ -34,7 +35,10 @@ export const AuditTab: React.FC<AuditTabProps> = ({
 
   const handleCopyRepair = async () => {
     const prompt = buildAiRepairPrompt(node, snapshot, report);
-    await navigator.clipboard.writeText(prompt);
+    if (!(await copyText(prompt))) {
+      onToast("复制失败，请先点击窗口后重试");
+      return;
+    }
     setCopiedPrompt(true);
     onToast("已复制脱敏 AI 诊断修复包，直接粘贴给 AI 即可自动修复");
     setTimeout(() => setCopiedPrompt(false), 2000);

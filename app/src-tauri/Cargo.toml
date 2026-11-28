@@ -1,6 +1,6 @@
 [package]
 name = "native-isp-cockpit"
-version = "0.1.3"
+version = "0.2.0"
 description = "Local flagship telemetry cockpit and menu bar HUD for native-isp-vps"
 authors = ["luvio-arlan"]
 license = "MIT"
@@ -30,6 +30,9 @@ uuid = { version = "1", features = ["v4"] }
 semver = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Uplink-bound (IP_BOUND_IF) RTT probe that bypasses the local Clash/Mihomo TUN stack
+socket2 = { version = "0.6", features = ["all"] }
+libc = "0.2"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
   "NSStatusItem",

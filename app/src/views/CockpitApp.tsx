@@ -146,6 +146,7 @@ export const CockpitApp: React.FC = () => {
             <button
               onClick={() => setAddModalOpen(true)}
               title="接入新节点"
+              aria-label="接入新节点"
               className="rounded-md p-1 text-zinc-400 transition hover:bg-white/10 hover:text-emerald-300"
             >
               <Plus className="h-3.5 w-3.5" />
@@ -169,7 +170,16 @@ export const CockpitApp: React.FC = () => {
                 return (
                   <div
                     key={n.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={selected}
                     onClick={() => selectNode(n.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        selectNode(n.id);
+                      }
+                    }}
                     className={`group flex cursor-pointer items-center justify-between rounded-xl px-2.5 py-2 transition ${
                       selected
                         ? "border border-emerald-500/30 bg-emerald-500/[0.11] text-zinc-100"
@@ -191,6 +201,7 @@ export const CockpitApp: React.FC = () => {
                         setPendingDeleteNode({ id: n.id, name: n.name });
                       }}
                       title="移除节点"
+                      aria-label={`移除节点 ${n.name}`}
                       className="rounded-md p-1 text-zinc-600 opacity-0 transition hover:bg-rose-500/15 hover:text-rose-300 group-hover:opacity-100"
                     >
                       <Trash2 className="h-3 w-3" />

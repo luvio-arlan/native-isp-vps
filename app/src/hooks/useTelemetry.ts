@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, isTauriRuntime, subscribeEvent } from "../lib/tauri";
+import { applyTheme, normalizeTheme, readCachedTheme, type ThemeId } from "../lib/theme";
 import type {
   AiProbeResult,
   AppSettings,
@@ -78,6 +79,7 @@ function buildBrowserPreviewData() {
       netRecvTotal: 184.1 * 1024 ** 3,
       tcpCount: 44,
       udpCount: 4,
+      panelTransport: "ssh-tunnel",
     },
     clients: [
       {
@@ -473,10 +475,10 @@ export function useTelemetry() {
   );
 
   const isDemo = Boolean(settings?.demoMode || nodes.length === 0);
-  const theme = settings?.theme === "obsidian" ? "obsidian" : "titanium";
+  const theme: ThemeId = settings ? normalizeTheme(settings.theme) : readCachedTheme();
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
+    applyTheme(theme);
   }, [theme]);
 
   const activeNode: NodeConfig = isDemo

@@ -102,6 +102,9 @@ pub struct XuiStatus {
     pub net_recv_total: u64,
     pub tcp_count: u64,
     pub udp_count: u64,
+    /// How the panel API was reached: `ssh-tunnel` | `tls` | `plaintext` | `paused` (see `panel_tunnel.rs`).
+    #[serde(default)]
+    pub panel_transport: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,8 +1,8 @@
 use crate::models::{CarrierLineMetrics, CarrierQualitySnapshot, CarrierSample, NodeConfig};
+use crate::ssh::{self, SshMode};
 use crate::storage::{self, PersistedCarrierMap};
 use chrono::Utc;
 use std::collections::HashMap;
-use tokio::process::Command;
 
 pub const MAX_CARRIER_SAMPLES: usize = 24;
 
@@ -204,49 +204,12 @@ pub fn parse_carrier_probe_output(stdout: &str) -> HashMap<String, (Option<f64>,
 pub async fn probe_node_carriers(
     node: &NodeConfig,
 ) -> Result<HashMap<String, (Option<f64>, f64)>, String> {
-    let preferred = storage::config_dir().join("s-%C");
-    let control_path = if preferred.to_string_lossy().len() + 38 <= 98 {
-        preferred
-    } else {
-        std::path::PathBuf::from("/tmp/nisp-%C")
-    };
-
-    let mut cmd = Command::new("ssh");
-    cmd.kill_on_drop(true);
-    cmd.arg("-o")
-        .arg("BatchMode=yes")
-        .arg("-o")
-        .arg("ConnectTimeout=6")
-        .arg("-o")
-        .arg("ServerAliveInterval=5")
-        .arg("-o")
-        .arg("ControlMaster=auto")
-        .arg("-o")
-        .arg("ControlPersist=180s")
-        .arg("-o")
-        .arg(format!("ControlPath={}", control_path.to_string_lossy()))
-        .arg("-o")
-        .arg("StrictHostKeyChecking=accept-new")
-        .arg("-p")
-        .arg(node.ssh_port.to_string());
-
-    if let Some(key_path) = &node.ssh_key_path {
-        let trimmed = key_path.trim();
-        if !trimmed.is_empty() {
-            let expanded = if let Some(rest) = trimmed.strip_prefix("~/") {
-                dirs::home_dir()
-                    .map(|h| h.join(rest).to_string_lossy().to_string())
-                    .unwrap_or_else(|| trimmed.to_string())
-            } else {
-                trimmed.to_string()
-            };
-            cmd.arg("-i").arg(expanded);
-        }
-    }
-
-    cmd.arg(format!("{}@{}", node.ssh_user, node.host))
-        .arg(CARRIER_PROBE_SCRIPT);
-
+    let mut cmd = ssh::command(
+        node,
+        SshMode::Multiplexed { persist_secs: 180 },
+        &[],
+        CARRIER_PROBE_SCRIPT,
+    )?;
     let output = tokio::time::timeout(std::time::Duration::from_secs(10), cmd.output())
         .await
         .map_err(|_| "SSH 三网探测超时".to_string())?

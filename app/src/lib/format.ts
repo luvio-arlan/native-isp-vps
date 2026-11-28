@@ -37,31 +37,44 @@ export function formatUptime(secs: number): string {
   return `${mins}m`;
 }
 
-export function daysUntilReset(resetDay: number): number {
-  const now = new Date();
-  const safeDay = Math.max(1, Math.min(28, resetDay || 1));
-  const currentMonthReset = new Date(now.getFullYear(), now.getMonth(), safeDay);
-  let target = currentMonthReset;
-  if (now.getDate() >= safeDay) {
-    target = new Date(now.getFullYear(), now.getMonth() + 1, safeDay);
-  }
-  const diffMs = target.getTime() - now.getTime();
-  return Math.max(1, Math.ceil(diffMs / 86400000));
+const DAY_MS = 86_400_000;
+
+/** Local-midnight reset date for `resetDay` (1..31) clamped to the month length (31 → Feb 28/29). */
+function resetDateFor(year: number, month: number, resetDay: number): Date {
+  const day = Math.max(1, Math.min(31, Math.round(resetDay) || 1));
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  return new Date(year, month, Math.min(day, lastDay));
 }
 
-export function daysElapsedInCycle(resetDay: number): number {
-  const remaining = daysUntilReset(resetDay);
-  return Math.max(1, 30 - remaining);
+/** Current monthly billing cycle `[start, end)` in local time, matching 3x-ui `reset` semantics. */
+export function billingCycle(resetDay: number, now: Date = new Date()): { start: Date; end: Date } {
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const thisMonth = resetDateFor(y, m, resetDay);
+  return now >= thisMonth
+    ? { start: thisMonth, end: resetDateFor(y, m + 1, resetDay) }
+    : { start: resetDateFor(y, m - 1, resetDay), end: thisMonth };
 }
 
-export function forecastCycleUsage(usedBytes: number, totalBytes: number, resetDay: number): {
+export function daysUntilReset(resetDay: number, now: Date = new Date()): number {
+  const { end } = billingCycle(resetDay, now);
+  return Math.max(1, Math.ceil((end.getTime() - now.getTime()) / DAY_MS));
+}
+
+export function forecastCycleUsage(
+  usedBytes: number,
+  totalBytes: number,
+  resetDay: number,
+  now: Date = new Date()
+): {
   projectedBytes: number;
   willExceed: boolean;
   pct: number;
 } {
-  const elapsed = daysElapsedInCycle(resetDay);
-  const dailyRate = usedBytes / elapsed;
-  const projectedBytes = dailyRate * 30;
+  const { start, end } = billingCycle(resetDay, now);
+  // At least one day elapsed so a fresh cycle never extrapolates a few minutes of traffic ×30.
+  const elapsedMs = Math.max(DAY_MS, now.getTime() - start.getTime());
+  const projectedBytes = (usedBytes / elapsedMs) * (end.getTime() - start.getTime());
   const pct = totalBytes > 0 ? Math.min(100, (usedBytes / totalBytes) * 100) : 0;
   return {
     projectedBytes,

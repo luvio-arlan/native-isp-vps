@@ -93,9 +93,11 @@ const hotAsyncFiles = new Set([
   "app/src-tauri/src/carrier_probe.rs",
   "app/src-tauri/src/local_probe.rs",
   "app/src-tauri/src/mihomo.rs",
+  "app/src-tauri/src/panel_tunnel.rs",
   "app/src-tauri/src/poller.rs",
   "app/src-tauri/src/inbox.rs",
 ]);
+const SSH_BUILDER = "app/src-tauri/src/ssh.rs";
 
 for (const file of rsFiles) {
   const text = fs.readFileSync(file, "utf8");
@@ -118,6 +120,14 @@ for (const file of rsFiles) {
         `[NO_BLOCKING_FS_IN_HOT_ASYNC] ${r}:${idx + 1}: blocking 'std::fs' in hot async path (${trimmed}).\n` +
           `  Why: Synchronous disk I/O stalls Tokio worker threads during polling/watching.\n` +
           `  Fix: Use 'tokio::fs' or offload storage calls via 'tokio::task::spawn_blocking'.`
+      );
+    }
+
+    if (r !== SSH_BUILDER && /Command::new\(\s*"ssh"\s*\)/.test(line)) {
+      failures.push(
+        `[SSH_BUILDER_ONLY] ${r}:${idx + 1}: raw 'Command::new("ssh")' outside ${SSH_BUILDER}.\n` +
+          `  Why: Node fields come from AI handoff JSON; only the central builder validates host/user and inserts '--' so values like '-oProxyCommand=...' can never become ssh options.\n` +
+          `  Fix: Use 'ssh::command(node, SshMode::..., &extra_args, remote_cmd)' from ${SSH_BUILDER}.`
       );
     }
 
@@ -147,8 +157,8 @@ if (fs.existsSync(tauriTsPath) && fs.existsSync(rustLibPath)) {
       : []
   );
 
-  for (const m of tsText.matchAll(/invoke\("([a-z0-9_]+)"/g)) {
-    const cmd = m[1];
+  const invokedCmds = new Set([...tsText.matchAll(/invoke\("([a-z0-9_]+)"/g)].map((m) => m[1]));
+  for (const cmd of invokedCmds) {
     if (!registeredCmds.has(cmd)) {
       failures.push(
         `[IPC_CONTRACT_PARITY] app/src/lib/tauri.ts invokes '${cmd}' which is missing from tauri::generate_handler![] in app/src-tauri/src/lib.rs.\n` +
@@ -156,6 +166,58 @@ if (fs.existsSync(tauriTsPath) && fs.existsSync(rustLibPath)) {
       );
     }
   }
+  for (const cmd of registeredCmds) {
+    if (!invokedCmds.has(cmd)) {
+      failures.push(
+        `[IPC_DEAD_COMMAND] app/src-tauri/src/lib.rs registers 'commands::${cmd}' but app/src/lib/tauri.ts never invokes it.\n` +
+          `  Why: Unused IPC commands widen the WebView attack surface and drift silently.\n` +
+          `  Fix: Add a typed method to 'api' in app/src/lib/tauri.ts, or remove the command from generate_handler![].`
+      );
+    }
+  }
+}
+
+// 4b. Event contract parity: every event the frontend subscribes to must be emitted by Rust
+const rustSources = rsFiles.map((f) => fs.readFileSync(f, "utf8")).join("\n");
+for (const file of feFiles) {
+  const text = fs.readFileSync(file, "utf8");
+  for (const m of text.matchAll(/subscribeEvent<[^>]*>\(\s*"(cockpit:\/\/[a-z0-9-]+)"/g)) {
+    if (!rustSources.includes(`"${m[1]}"`)) {
+      failures.push(
+        `[EVENT_CONTRACT_PARITY] ${rel(file)} subscribes to '${m[1]}' but no Rust source under app/src-tauri/src emits it.\n` +
+          `  Fix: Emit it via app.emit / state::emit_to_visible_windows, or fix the event name.`
+      );
+    }
+  }
+}
+
+// 4c. WebView hardening: a strict CSP must stay configured
+const tauriConf = JSON.parse(fs.readFileSync(path.join(ROOT, "app/src-tauri/tauri.conf.json"), "utf8"));
+const csp = tauriConf?.app?.security?.csp;
+const scriptSrc = typeof csp === "string" ? csp : csp?.["script-src"] ?? csp?.["default-src"] ?? "";
+if (!csp || /unsafe-inline|unsafe-eval/.test(scriptSrc)) {
+  failures.push(
+    `[CSP_REQUIRED] app/src-tauri/tauri.conf.json: app.security.csp must be set and script-src must not allow 'unsafe-inline'/'unsafe-eval' (got ${JSON.stringify(csp)}).\n` +
+      `  Why: Without CSP any injected markup (e.g. a crafted node name) could run script with IPC access.\n` +
+      `  Fix: Restore the object CSP with script-src 'self' and connect-src 'ipc: http://ipc.localhost'.`
+  );
+}
+
+// 4d. Network doc invariant: never recommend `rotate` for VPS resolvers (one dead upstream ⇒ ~1/3 lookups stall)
+for (const doc of ["SKILL.md", ...walk(path.join(ROOT, "references"), [".md", ".conf", ".yaml"]).map(rel)]) {
+  const full = path.join(ROOT, doc);
+  if (!fs.existsSync(full)) continue;
+  fs.readFileSync(full, "utf8")
+    .split("\n")
+    .forEach((line, idx) => {
+      if (/^\s*options\b.*\brotate\b/.test(line)) {
+        failures.push(
+          `[NO_RESOLV_ROTATE] ${doc}:${idx + 1}: resolv.conf template uses 'rotate' (${line.trim()}).\n` +
+            `  Why: REALITY resolves its camouflage target per connection; with rotate, one unreachable upstream stalls ~1/3 of handshakes by the resolver timeout.\n` +
+            `  Fix: Probe upstreams first, keep only reachable ones in order, and use 'options timeout:1 attempts:2'.`
+        );
+      }
+    });
 }
 
 // 5. Proxy routing invariant: Fake-IP GEOIP rules must always carry `,no-resolve`
@@ -187,6 +249,17 @@ if (!(pkgVer && tauriVer && cargoVer && pkgVer === tauriVer && tauriVer === carg
     `[VERSION_PARITY] Version mismatch across manifests: package.json=${pkgVer}, Cargo.toml=${cargoVer}, tauri.conf.json=${tauriVer}.\n` +
       `  Why: Release tags & Tauri updater rely on identical version numbers across JS/Rust/Tauri configs.\n` +
       `  Fix: Align 'version' in app/package.json, app/src-tauri/Cargo.toml, and app/src-tauri/tauri.conf.json.`
+  );
+}
+
+// 6b. Release notes parity: the release workflow publishes CHANGELOG.md's section for the tag
+const changelogPath = path.join(ROOT, "CHANGELOG.md");
+const changelog = fs.existsSync(changelogPath) ? fs.readFileSync(changelogPath, "utf8") : "";
+if (!new RegExp(`^## v${pkgVer.replace(/\./g, "\\.")}\\b`, "m").test(changelog)) {
+  failures.push(
+    `[CHANGELOG_PARITY] CHANGELOG.md has no '## v${pkgVer}' section.\n` +
+      `  Why: .github/workflows/release-app.yml uses that section as the GitHub Release body.\n` +
+      `  Fix: Add a '## v${pkgVer} — <date>' section at the top of CHANGELOG.md describing the release.`
   );
 }
 

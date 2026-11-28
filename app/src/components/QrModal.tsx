@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { Check, Copy, Smartphone, X } from "lucide-react";
 import { AnimatedModal } from "./AnimatedModal";
+import { copyText } from "../lib/clipboard";
 
 interface QrModalProps {
   title: string;
@@ -46,6 +47,7 @@ export const QrModal: React.FC<QrModalProps> = ({ title, url, onClose }) => {
         </div>
         <button
           onClick={onClose}
+          aria-label="关闭"
           className="rounded-lg p-1 text-zinc-400 transition hover:bg-white/8 hover:text-zinc-100"
         >
           <X className="h-4 w-4" />
@@ -64,14 +66,9 @@ export const QrModal: React.FC<QrModalProps> = ({ title, url, onClose }) => {
 
       <button
         onClick={async () => {
-          if (!activeUrl) return;
-          try {
-            await navigator.clipboard.writeText(activeUrl);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1800);
-          } catch {
-            // Ignore clipboard permission errors
-          }
+          if (!activeUrl || !(await copyText(activeUrl))) return;
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1800);
         }}
         className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/6 py-2 text-[12px] font-medium text-zinc-100 transition hover:bg-white/12"
       >

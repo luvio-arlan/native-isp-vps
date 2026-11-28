@@ -16,7 +16,15 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
 pub async fn process_inbox(app: &AppHandle, state: &CockpitState) -> bool {
-    let imported = inbox::drain_inbox_async().await;
+    let inbox::InboxDrain { imported, rejected } = inbox::drain_inbox_async().await;
+    if !rejected.is_empty() {
+        let _ = app
+            .notification()
+            .builder()
+            .title("节点交接文件未能导入")
+            .body(format!("已隔离为 .invalid：{}", rejected.join("、")))
+            .show();
+    }
     if imported.is_empty() {
         return false;
     }
@@ -81,14 +89,14 @@ pub async fn poll_once(
     };
 
     let snapshot = if settings.demo_mode || active_node.is_none() {
-        let real_shield = mihomo::probe_local_shield(None, force_slow).await;
+        let real_shield = mihomo::probe_local_shield(force_slow).await;
         demo::build_demo_snapshot(state, real_shield).await
     } else if let Some(node) = active_node {
         let secrets = storage::load_secrets(&node.id);
         let (rtt_ms, (xui_status, clients), mut shield) = tokio::join!(
-            local_probe::probe_real_rtt(&node.host, node.vless_port, node.ssh_port, &node.panel_url),
+            local_probe::probe_real_rtt(&node),
             xui::fetch_xui_telemetry(&node, &secrets, force_slow),
-            mihomo::probe_local_shield(Some(&node.host), force_slow)
+            mihomo::probe_local_shield(force_slow)
         );
 
         if let Some(leak) = state.latest_leak.read().await.clone() {
@@ -155,6 +163,20 @@ pub async fn poll_once(
     } else {
         return;
     };
+
+    // The user may have switched nodes while this tick was in flight: never publish a late
+    // snapshot of the previous node under the new node's header (the forced re-poll follows).
+    if !settings.demo_mode && snapshot.node_id != "demo-la" {
+        let still_active = state
+            .active_node_id
+            .read()
+            .await
+            .as_deref()
+            .map_or(true, |id| id == snapshot.node_id);
+        if !still_active {
+            return;
+        }
+    }
 
     tray::update_tray_title(app, &snapshot, &settings);
 

@@ -62,7 +62,11 @@ export interface XuiStatus {
   netRecvTotal: number;
   tcpCount: number;
   udpCount: number;
+  /** How the panel API was reached (see `app/src-tauri/src/panel_tunnel.rs`). */
+  panelTransport?: PanelTransport | "";
 }
+
+export type PanelTransport = "ssh-tunnel" | "tls" | "plaintext" | "paused";
 
 export interface ClientQuota {
   email: string;

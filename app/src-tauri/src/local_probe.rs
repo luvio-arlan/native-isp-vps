@@ -1,4 +1,4 @@
-use crate::models::{AiProbeResult, LeakCheckResult};
+use crate::models::{AiProbeResult, LeakCheckResult, NodeConfig};
 use chrono::Utc;
 use reqwest::Client;
 use std::collections::HashMap;
@@ -149,9 +149,129 @@ async fn probe_panel_head_rtt(trimmed_panel: &str) -> Option<f64> {
     Some(measured)
 }
 
-/// Measures true end-to-end RTT to the VPS, adaptively bypassing Clash TUN's local TCP SYN-ACK hijack
-/// so active 2s polling never wastes a futile TCP handshake to port 443 on every tick.
-pub async fn probe_real_rtt(
+/// Measures true network RTT to the node.
+///
+/// macOS first tries a TCP handshake bound to the physical uplink (bypasses the Clash/Mihomo TUN
+/// stack, which would otherwise answer the SYN locally in <1ms) against the panel / subscription
+/// HTTP ports, so the probe never touches the Reality port (each Reality accept makes Xray dial
+/// its camouflage target). Falls back to the adaptive TUN-aware strategy everywhere else.
+pub async fn probe_real_rtt(node: &NodeConfig) -> Option<f64> {
+    #[cfg(target_os = "macos")]
+    if let Ok(ip) = node.host.parse::<std::net::IpAddr>() {
+        if let Some(ms) = uplink::probe_candidates(&node.host, ip, &uplink_probe_ports(node)).await {
+            return Some(ms);
+        }
+    }
+    probe_rtt_adaptive(&node.host, node.vless_port, node.ssh_port, &node.panel_url).await
+}
+
+/// Candidate ports for the uplink-bound handshake: panel HTTP, subscription HTTP, then Reality.
+fn uplink_probe_ports(node: &NodeConfig) -> Vec<u16> {
+    let http_ports = [Some(node.panel_url.as_str()), node.sub_url.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter_map(|url| reqwest::Url::parse(url.trim()).ok())
+        .filter(|url| url.host_str() == Some(node.host.as_str()))
+        .filter_map(|url| url.port_or_known_default());
+    let mut ports: Vec<u16> = Vec::with_capacity(3);
+    for port in http_ports.chain(std::iter::once(node.vless_port)) {
+        if !ports.contains(&port) {
+            ports.push(port);
+        }
+    }
+    ports
+}
+
+#[cfg(target_os = "macos")]
+mod uplink {
+    //! TCP handshake RTT over the physical uplink (`IP_BOUND_IF`), bypassing any local TUN.
+    use std::collections::HashMap;
+    use std::net::{IpAddr, SocketAddr};
+    use std::num::NonZeroU32;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    const UPLINK_TTL: Duration = Duration::from_secs(30);
+    static UPLINK: Mutex<Option<(Instant, Option<NonZeroU32>)>> = Mutex::new(None);
+    /// Last port that answered per host, so steady-state polling costs exactly one handshake.
+    static GOOD_PORT: Mutex<Option<HashMap<String, u16>>> = Mutex::new(None);
+
+    /// Interface index of the default route (e.g. `en0`); `None` when the default is a tunnel.
+    async fn uplink_index() -> Option<NonZeroU32> {
+        if let Some((at, idx)) = UPLINK.lock().ok().and_then(|g| *g) {
+            if at.elapsed() < UPLINK_TTL {
+                return idx;
+            }
+        }
+        let output = tokio::process::Command::new("/sbin/route")
+            .args(["-n", "get", "default"])
+            .output()
+            .await
+            .ok();
+        let iface = output
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|text| {
+                text.lines()
+                    .find_map(|l| l.trim().strip_prefix("interface:").map(|v| v.trim().to_string()))
+            });
+        let idx = iface
+            .filter(|name| !name.starts_with("utun") && !name.starts_with("lo"))
+            .and_then(|name| std::ffi::CString::new(name).ok())
+            // SAFETY: `name` is a valid NUL-terminated C string that outlives the call.
+            .and_then(|name| NonZeroU32::new(unsafe { libc::if_nametoindex(name.as_ptr()) }));
+        if let Ok(mut guard) = UPLINK.lock() {
+            *guard = Some((Instant::now(), idx));
+        }
+        idx
+    }
+
+    async fn tcping_bound(ip: IpAddr, port: u16, index: NonZeroU32) -> Option<f64> {
+        let IpAddr::V4(v4) = ip else {
+            return None;
+        };
+        let socket = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )
+        .ok()?;
+        socket.bind_device_by_index_v4(Some(index)).ok()?;
+        socket.set_nonblocking(true).ok()?;
+        let tcp = tokio::net::TcpSocket::from_std_stream(socket.into());
+        let start = Instant::now();
+        let connected = tokio::time::timeout(
+            Duration::from_secs(3),
+            tcp.connect(SocketAddr::new(IpAddr::V4(v4), port)),
+        )
+        .await;
+        matches!(connected, Ok(Ok(_)))
+            .then(|| (start.elapsed().as_secs_f64() * 1000.0 * 10.0).round() / 10.0)
+    }
+
+    pub async fn probe_candidates(host: &str, ip: IpAddr, ports: &[u16]) -> Option<f64> {
+        let index = uplink_index().await?;
+        let remembered = GOOD_PORT
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().and_then(|m| m.get(host).copied()));
+        let ordered = remembered
+            .into_iter()
+            .chain(ports.iter().copied().filter(|p| Some(*p) != remembered));
+        for port in ordered {
+            if let Some(ms) = tcping_bound(ip, port, index).await {
+                if let Ok(mut guard) = GOOD_PORT.lock() {
+                    guard.get_or_insert_with(HashMap::new).insert(host.to_string(), port);
+                }
+                return Some(ms);
+            }
+        }
+        None
+    }
+}
+
+/// TUN-aware fallback: adaptively bypasses Clash TUN's local SYN-ACK hijack via panel `HEAD`
+/// keep-alive probes (or SSH banner timing) when a plain TCP handshake is suspiciously fast.
+async fn probe_rtt_adaptive(
     host: &str,
     vless_port: u16,
     ssh_port: u16,
@@ -356,4 +476,42 @@ pub async fn probe_ai_endpoints() -> Vec<AiProbeResult> {
         }
     }
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uplink_ports_prefer_http_listeners_and_dedupe_reality_port() {
+        let node = NodeConfig {
+            id: "n1".into(),
+            name: "n".into(),
+            flag: "🌐".into(),
+            city: "LA".into(),
+            isp_tag: "Dual ISP".into(),
+            host: "1.2.3.4".into(),
+            vless_port: 443,
+            panel_url: "http://1.2.3.4:2053/base".into(),
+            panel_username: None,
+            sub_url: Some("http://1.2.3.4:2096/sub/abc".into()),
+            mihomo_sub_url: None,
+            ssh_port: 22,
+            ssh_user: "root".into(),
+            ssh_key_path: None,
+            reality_target: None,
+            monthly_total_gb: 1000.0,
+            reset_day: 1,
+            created_at: String::new(),
+            source: "test".into(),
+        };
+        assert_eq!(uplink_probe_ports(&node), vec![2053, 2096, 443]);
+
+        let cdn_panel = NodeConfig {
+            panel_url: "https://panel.example.com/base".into(),
+            sub_url: Some("http://1.2.3.4:443/sub/abc".into()),
+            ..node
+        };
+        assert_eq!(uplink_probe_ports(&cdn_panel), vec![443]);
+    }
 }

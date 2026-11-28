@@ -52,18 +52,19 @@ export const NetworkTab: React.FC<NetworkTabProps> = React.memo(({
     return () => window.clearInterval(timer);
   }, [windowRange, node.id, onLoadHistory24h]);
 
+  // Timeouts are dropped rather than plotted as 0ms (which would read as "excellent latency");
+  // they are surfaced through the loss statistic instead.
   const rttSeries = useMemo(() => {
     if (windowRange === "24h") {
-      return history24h.map((b) => ({
-        ts: b.ts,
-        primary: b.avgRttMs ?? 0,
-        secondary: b.p95RttMs ?? undefined,
-      }));
+      return history24h.flatMap((b) =>
+        b.avgRttMs != null
+          ? [{ ts: b.ts, primary: b.avgRttMs, secondary: b.p95RttMs ?? undefined }]
+          : []
+      );
     }
-    return (snapshot?.history ?? []).map((pt) => ({
-      ts: pt.ts,
-      primary: pt.rttMs ?? 0,
-    }));
+    return (snapshot?.history ?? []).flatMap((pt) =>
+      pt.rttMs != null ? [{ ts: pt.ts, primary: pt.rttMs }] : []
+    );
   }, [windowRange, history24h, snapshot?.history]);
 
   const stats = useMemo(() => {
@@ -74,9 +75,12 @@ export const NetworkTab: React.FC<NetworkTabProps> = React.memo(({
       const p95s = history24h
         .map((b) => b.p95RttMs)
         .filter((v): v is number => v != null && v > 0);
-      const lossAvg = history24h.length
+      const totalSamples = history24h.reduce((acc, b) => acc + Math.max(1, b.samples), 0);
+      const lossAvg = totalSamples
         ? Math.round(
-            (history24h.reduce((acc, b) => acc + b.lossPct, 0) / history24h.length) * 10
+            (history24h.reduce((acc, b) => acc + b.lossPct * Math.max(1, b.samples), 0) /
+              totalSamples) *
+              10
           ) / 10
         : 0;
       return {
@@ -107,7 +111,10 @@ export const NetworkTab: React.FC<NetworkTabProps> = React.memo(({
       <div className="glass-card rounded-2xl p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <div className="flex items-center gap-2 text-[13px] font-semibold text-zinc-100">
+            <div
+              className="flex items-center gap-2 text-[13px] font-semibold text-zinc-100"
+              title="macOS 上绑定物理网卡直测 TCP 握手 RTT，绕过本机 TUN 虚拟网卡"
+            >
               <Activity className="h-4 w-4 text-emerald-400" />
               TCP 链路延迟
             </div>

@@ -6,7 +6,71 @@ use std::time::{Duration, Instant};
 pub const MAX_FINE_HISTORY: usize = 60;
 pub const MAX_24H_BUCKETS: usize = 1440;
 const BUCKET_MS: i64 = 60_000;
+const WINDOW_24H_MS: i64 = 24 * 60 * 60 * 1000;
+/// 24h chart resolution sent over IPC: 5-minute groups (288 points instead of 1440).
+const CHART_GROUP_MS: i64 = 5 * BUCKET_MS;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Merges minute buckets into `group_ms`-wide buckets (time-aligned). RTT averages are weighted by
+/// successful samples, loss by total samples; P95 keeps the group's worst minute (conservative peak).
+pub fn downsample_buckets(buckets: &[HistoryBucket], group_ms: i64) -> Vec<HistoryBucket> {
+    #[derive(Default)]
+    struct Group {
+        ts: i64,
+        rtt_weighted_sum: f64,
+        rtt_weight: f64,
+        missing: f64,
+        worst_p95: Option<f64>,
+        local_down_sum: u128,
+        vps_down_sum: u128,
+        samples: u32,
+    }
+    impl Group {
+        fn finish(self) -> HistoryBucket {
+            let n = self.samples.max(1);
+            HistoryBucket {
+                ts: self.ts,
+                avg_rtt_ms: (self.rtt_weight > 0.0)
+                    .then(|| ((self.rtt_weighted_sum / self.rtt_weight) * 10.0).round() / 10.0),
+                p95_rtt_ms: self.worst_p95,
+                loss_pct: ((self.missing / n as f64) * 100.0 * 10.0).round() / 10.0,
+                avg_local_down_bps: (self.local_down_sum / n as u128) as u64,
+                avg_vps_down_bps: (self.vps_down_sum / n as u128) as u64,
+                samples: self.samples,
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut current: Option<Group> = None;
+    for b in buckets {
+        let group_ts = b.ts.div_euclid(group_ms) * group_ms;
+        if current.as_ref().is_some_and(|g| g.ts != group_ts) {
+            out.extend(current.take().map(Group::finish));
+        }
+        let g = current.get_or_insert_with(|| Group {
+            ts: group_ts,
+            ..Default::default()
+        });
+        let samples = b.samples.max(1);
+        let missing = (b.loss_pct / 100.0 * samples as f64).round();
+        if let Some(avg) = b.avg_rtt_ms {
+            let ok = (samples as f64 - missing).max(1.0);
+            g.rtt_weighted_sum += avg * ok;
+            g.rtt_weight += ok;
+        }
+        g.missing += missing;
+        g.worst_p95 = match (g.worst_p95, b.p95_rtt_ms) {
+            (Some(x), Some(y)) => Some(x.max(y)),
+            (x, y) => x.or(y),
+        };
+        g.local_down_sum += b.avg_local_down_bps as u128 * samples as u128;
+        g.vps_down_sum += b.avg_vps_down_bps as u128 * samples as u128;
+        g.samples += samples;
+    }
+    out.extend(current.map(Group::finish));
+    out
+}
 
 /// Returns a smoothed RTT (median of the latest up to 7 valid samples, ~14s in active mode)
 /// so isolated spikes never cause erratic health score jumps. Reports `None` immediately when
@@ -272,7 +336,10 @@ impl HistoryStore {
                 .buckets
                 .entry(node_id.to_string())
                 .or_insert_with(|| VecDeque::with_capacity(MAX_24H_BUCKETS));
-            if ring.len() >= MAX_24H_BUCKETS {
+            // Bound by both count and age so app downtime never stretches the "24h" window.
+            while ring.len() >= MAX_24H_BUCKETS
+                || ring.front().is_some_and(|b| b.ts < pt.ts - WINDOW_24H_MS)
+            {
                 ring.pop_front();
             }
             ring.push_back(finished);
@@ -284,18 +351,36 @@ impl HistoryStore {
         self.push_fine_only(node_id, pt, None)
     }
 
-    pub fn get_24h_buckets(&self, node_id: &str) -> Vec<HistoryBucket> {
-        let mut out: Vec<HistoryBucket> = self
+    /// Minute buckets inside `[now - 24h, now]` (incl. the live partial minute), downsampled to
+    /// 5-minute chart points.
+    pub fn get_24h_buckets(&self, node_id: &str, now_ms: i64) -> Vec<HistoryBucket> {
+        let cutoff = now_ms - WINDOW_24H_MS;
+        let mut minutes: Vec<HistoryBucket> = self
             .buckets
             .get(node_id)
-            .map(|q| q.iter().cloned().collect())
+            .map(|q| q.iter().filter(|b| b.ts >= cutoff).cloned().collect())
             .unwrap_or_default();
         if let Some(acc) = self.accumulators.get(node_id) {
             if acc.samples > 0 {
-                out.push(acc.to_bucket());
+                minutes.push(acc.to_bucket());
             }
         }
-        out
+        downsample_buckets(&minutes, CHART_GROUP_MS)
+    }
+
+    /// Closes every partial minute into the persisted ring (called once on app exit).
+    pub fn flush_partial_minutes(&mut self) {
+        for (node_id, acc) in self.accumulators.drain() {
+            if acc.samples == 0 {
+                continue;
+            }
+            let ring = self.buckets.entry(node_id).or_default();
+            if ring.len() >= MAX_24H_BUCKETS {
+                ring.pop_front();
+            }
+            ring.push_back(acc.to_bucket());
+            self.dirty = true;
+        }
     }
 
     pub fn record_xui_connectivity(&mut self, node_id: &str, connected: bool) -> u32 {
@@ -448,12 +533,53 @@ mod tests {
                 local_up_bps: 200,
             },
         );
-        let buckets = store.get_24h_buckets("n1");
-        assert_eq!(buckets.len(), 2);
-        assert_eq!(buckets[0].avg_rtt_ms, Some(120.0));
-        assert_eq!(buckets[0].p95_rtt_ms, Some(140.0));
-        assert_eq!(buckets[0].loss_pct, 25.0);
-        assert_eq!(buckets[1].avg_rtt_ms, Some(150.0));
+        let minutes = store.buckets.get("n1").expect("minute ring");
+        assert_eq!(minutes.len(), 1);
+        assert_eq!(minutes[0].avg_rtt_ms, Some(120.0));
+        assert_eq!(minutes[0].p95_rtt_ms, Some(140.0));
+        assert_eq!(minutes[0].loss_pct, 25.0);
+
+        // Chart view: both minutes fall in the same 5-minute group (finished + live partial minute)
+        let chart = store.get_24h_buckets("n1", 125_000);
+        assert_eq!(chart.len(), 1);
+        assert_eq!(chart[0].samples, 5);
+        assert_eq!(chart[0].loss_pct, 20.0);
+        assert_eq!(chart[0].p95_rtt_ms, Some(150.0));
+        // (100+120+140)*3/3 weighted with the 150ms partial minute → (360 + 150) / 4
+        assert_eq!(chart[0].avg_rtt_ms, Some(127.5));
+    }
+
+    #[test]
+    fn chart_window_excludes_stale_buckets_and_downsamples_to_5min() {
+        let mut store = HistoryStore::empty();
+        let day = WINDOW_24H_MS;
+        let base = 10 * day;
+        // One stale sample ~25h ago, then 10 consecutive live minutes
+        let stale_ts = base - day - 3_600_000;
+        let mut push = |ts: i64, rtt: Option<f64>| {
+            store.record_real(
+                "n1",
+                TelemetryPoint {
+                    ts,
+                    rtt_ms: rtt,
+                    vps_down_bps: 1000,
+                    vps_up_bps: 100,
+                    local_down_bps: 1000,
+                    local_up_bps: 100,
+                },
+            );
+        };
+        push(stale_ts, Some(500.0));
+        for minute in 0..10 {
+            push(base + minute * BUCKET_MS, Some(200.0));
+        }
+        push(base + 10 * BUCKET_MS, Some(200.0));
+
+        let chart = store.get_24h_buckets("n1", base + 10 * BUCKET_MS);
+        assert!(chart.iter().all(|b| b.ts >= base - day), "stale bucket leaked: {chart:?}");
+        assert!(chart.iter().all(|b| b.avg_rtt_ms == Some(200.0)));
+        assert!(chart.len() <= 3, "10 minutes should collapse into <=3 five-minute groups");
+        assert!(chart.windows(2).all(|w| w[1].ts - w[0].ts == CHART_GROUP_MS));
     }
 
     #[test]

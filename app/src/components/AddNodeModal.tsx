@@ -3,6 +3,7 @@ import { Bot, Check, Copy, FileJson, KeyRound, Server, Sparkles, X } from "lucid
 import type { HandoffPayload } from "../types/telemetry";
 import { buildAiDeployPrompt } from "../lib/diagnostic";
 import { AnimatedModal } from "./AnimatedModal";
+import { copyText } from "../lib/clipboard";
 
 interface AddNodeModalProps {
   open: boolean;
@@ -24,8 +25,8 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
 
   // Manual form state
   const [host, setHost] = useState("");
-  const [city, setCity] = useState("Los Angeles");
-  const [flag, setFlag] = useState("🇺🇸");
+  const [city, setCity] = useState("");
+  const [flag, setFlag] = useState("");
   const [ispTag, setIspTag] = useState("Dual ISP");
   const [panelUrl, setPanelUrl] = useState("");
   const [apiToken, setApiToken] = useState("");
@@ -47,13 +48,12 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
   const deployPrompt = buildAiDeployPrompt();
 
   const handleCopyPrompt = async () => {
-    try {
-      await navigator.clipboard.writeText(deployPrompt);
-      setCopiedPrompt(true);
-      setTimeout(() => setCopiedPrompt(false), 2000);
-    } catch {
+    if (!(await copyText(deployPrompt))) {
       setError("复制失败，请手动选中文本复制");
+      return;
     }
+    setCopiedPrompt(true);
+    setTimeout(() => setCopiedPrompt(false), 2000);
   };
 
   const handleManualSubmit = async (e: React.FormEvent) => {
@@ -112,6 +112,7 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
           <h2 className="text-[16px] font-semibold text-zinc-100">接入 VPS 节点</h2>
           <button
             onClick={onClose}
+            aria-label="关闭"
             className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-white/8 hover:text-zinc-100"
           >
             <X className="h-4 w-4" />
@@ -196,6 +197,8 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
                   <input
                     value={flag}
                     onChange={(e) => setFlag(e.target.value)}
+                    placeholder="🌐"
+                    aria-label="国旗 Emoji"
                     className="w-10 rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-center text-[12px] outline-none"
                   />
                   <input

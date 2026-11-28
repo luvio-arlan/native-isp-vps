@@ -14,6 +14,8 @@ import { useTelemetry } from "../hooks/useTelemetry";
 import { SparklineChart } from "../components/SparklineChart";
 import { StatusBadge } from "../components/StatusBadge";
 import { api, isTauriRuntime, subscribeEvent } from "../lib/tauri";
+import { copyText } from "../lib/clipboard";
+import { summarizeQuota } from "../lib/quota";
 import {
   daysUntilReset,
   formatBytes,
@@ -135,11 +137,9 @@ export const PopoverHud: React.FC = () => {
 
   const clients = snapshot?.clients ?? [];
   const primaryClient = clients[0];
-  const totalUsed = clients.reduce((acc, c) => acc + c.upBytes + c.downBytes, 0);
-  const totalQuota =
-    clients.length === 1 && primaryClient?.totalBytes
-      ? primaryClient.totalBytes
-      : activeNode.monthlyTotalGb * 1024 ** 3;
+  const quota = summarizeQuota(activeNode, clients);
+  const totalUsed = quota.usedBytes;
+  const totalQuota = quota.totalBytes;
   const primaryPct = totalQuota > 0 ? Math.min(100, (totalUsed / totalQuota) * 100) : 0;
 
   const memPct =
@@ -153,14 +153,9 @@ export const PopoverHud: React.FC = () => {
 
   const handleCopySub = async () => {
     const url = primaryClient?.subUrl || activeNode.subUrl;
-    if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch {
-      // Ignore clipboard permission errors in background popover
-    }
+    if (!url || !(await copyText(url))) return;
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
   };
 
   return (
@@ -197,6 +192,7 @@ export const PopoverHud: React.FC = () => {
           <button
             onClick={() => api.openMainWindow()}
             title="展开完整驾驶舱"
+            aria-label="展开完整驾驶舱"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/6 text-zinc-200 outline-none transition hover:border-emerald-500/40 hover:bg-emerald-500/15 hover:text-emerald-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/50"
           >
             <Maximize2 className="h-3.5 w-3.5" />
@@ -300,9 +296,7 @@ export const PopoverHud: React.FC = () => {
         <div className="glass-card mt-2.5 rounded-xl px-3 py-2.5">
           <div className="flex items-center justify-between text-[11px]">
             <span className="font-medium text-zinc-200">
-              {clients.length === 1 && primaryClient
-                ? `配额 · ${primaryClient.email}`
-                : "月度流量配额"}
+              {quota.ownerLabel ? `配额 · ${quota.ownerLabel}` : "月度流量配额"}
             </span>
             <span className="font-mono-num text-zinc-400">
               {formatBytes(totalUsed)} / {formatBytes(totalQuota)}

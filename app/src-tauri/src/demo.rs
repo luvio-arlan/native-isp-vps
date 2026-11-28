@@ -112,6 +112,7 @@ pub async fn build_demo_snapshot(
         net_recv_total: 184_110_000_000,
         tcp_count: 46,
         udp_count: 6,
+        panel_transport: "ssh-tunnel".to_string(),
     };
 
     let clients = vec![ClientQuota {
